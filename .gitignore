@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+.venv/
 
 # Runtime/build artifacts from live backend testing
 CSpyServer2-ServiceRegistry.txt
