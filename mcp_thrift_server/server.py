@@ -24,6 +24,7 @@ from .cspy_server_manager import (
 )
 from .thrift_client import (
     ThriftBridgeError,
+    coerce_call_args,
     get_debugger_service,
     load_service_registry_module,
     load_thrift_module,
@@ -832,6 +833,7 @@ def _ensure_listwindow_frontend() -> dict[str, Any]:
 
 def _call_debugger(method: str, *args: Any, **kwargs: Any) -> Any:
     cfg = load_config()
+    args, kwargs = coerce_call_args(get_debugger_service(cfg), method, args, kwargs)
     with open_debugger_client(cfg) as client:
         fn = getattr(client, method, None)
         if fn is None or not callable(fn):
@@ -847,6 +849,7 @@ def _call_breakpoints(method: str, *args: Any, **kwargs: Any) -> Any:
     if bp_service is None:
         raise ThriftBridgeError("Service 'Breakpoints' not found in breakpoints.thrift")
 
+    args, kwargs = coerce_call_args(bp_service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "breakpoints")
     client = make_client(bp_service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -937,6 +940,7 @@ def _call_contextmanager(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'ContextManager' not found in cspy.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "debugger.contextmanager")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -959,6 +963,7 @@ def _call_memory(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'CSpyMemory' not found in memory.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "debugger.memory")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -981,6 +986,7 @@ def _call_disassembly(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'Disassembly' not found in disassembly.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "disassembly")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1003,6 +1009,7 @@ def _call_sourcelookup(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'SourceLookup' not found in sourcelookup.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "sourcelookup")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1025,6 +1032,7 @@ def _call_libsupport(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'LibSupportService2' not found in libsupport.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "libsupport")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1047,6 +1055,7 @@ def _call_listwindow(service_name: str, method: str, *args: Any, **kwargs: Any) 
     if service is None:
         raise ThriftBridgeError("Service 'ListWindowBackend' not found in listwindow.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     _ensure_listwindow_frontend()
     host = ""
     port = 0
@@ -1102,6 +1111,7 @@ def _call_trace_listwindow(service_name: str, method: str, *args: Any, **kwargs:
     if service is None:
         raise ThriftBridgeError("Service 'TraceListWindowBackend' not found in listwindow.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     _ensure_listwindow_frontend()
     snapshot = _list_registry_services("")
     exact = next((s for s in snapshot if s["name"] == service_name), None)
@@ -2728,10 +2738,12 @@ def debugger_call(method: str, args_json: str = "[]") -> Any:
     Returns:
         RPC result converted to JSON-serializable structure.
 
-    Caveats:
-        Complex thrift struct inputs are best handled by dedicated tools. Passing
-        nested struct payloads through this generic tool may fail depending on
-        thriftpy2 conversion behavior.
+    Struct and enum arguments:
+        JSON objects are coerced (recursively) into the thrift struct the method
+        expects, matched by field name — e.g. for evalExpression pass
+        `[{"type": "CurrentInspection", "level": 0, "core": 0, "task": 0}, "argc", [], 0, false]`.
+        Enum-typed fields accept the enum name as a string (with or without the
+        leading "k") or the raw integer value.
     """
     safe_pre_session_methods = {
         "getVersionString",
