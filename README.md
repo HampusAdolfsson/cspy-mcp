@@ -311,6 +311,42 @@ Live test lifecycle expectation:
 - `listwindow_get_overview(service_name)`
 - `listwindow_get_rows(service_name, first_row=0, max_rows=50)`
 - `listwindow_get_notifications(clear=False)`
+- `project_load_workspace(file_path, fetch_dependency_data=True)`
+- `project_status()`
+- `project_get_files(project_path="", config_name="", collection="ProjFiles")`
+- `project_build(project_path="", config_name="", num_parallel_builds=4, max_output_lines=200)`
+- `project_get_launch_config(project_path="", config_name="")`
+- `project_configure_and_start_debug(project_path="", config_name="", build_first=True, start_session=True)`
+- `projectmanager_call(method, args_json="[]")`
+
+### ProjectManager tools (build/debug/edit loop)
+
+The `project_*` tools talk to the `ProjectManager` thrift service
+(`projectmanager.thrift`, registry name
+`com.iar.thrift.service.projectmanager`, override with
+`THRIFT_PROJECTMANAGER_SERVICE_NAME`). That service is hosted by the IDE
+backend (`iaride`, e.g. started via `run_iaride.sh`) — it is **not**
+available from a standalone `CSpyServer2`.
+
+Canonical edit → build → debug loop:
+1. `project_load_workspace("/abs/path/workspace.eww")` (or a bare `.ewp`)
+2. edit source files on disk
+3. `project_build()` — synchronous; a failed build returns `ok=false` with
+   the trailing build output in `data.output_tail` instead of raising
+4. `project_configure_and_start_debug()` — rebuilds (optional), fetches the
+   launch configuration for the project's current build configuration via
+   `GetLaunchConfigurationForConfiguration`, passes it straight to
+   `Debugger.configureSession`, and starts the SMP session. No hand-written
+   `launch.json` is needed.
+5. Use the regular `debugger_*` / `breakpoints_*` tools, then
+   `debugger_stop_session()` and loop back to step 2.
+
+`project_get_launch_config()` returns the launch configuration as JSON if
+you want to inspect or tweak it before configuring a session manually.
+Empty `project_path` / `config_name` arguments mean "the current project" /
+"its current configuration"; `projectmanager_call` is the generic fallback
+for the rest of the ProjectManager API (workspace/node/option editing,
+toolchains, batch builds, ...).
 
 `debugger_list_methods` returns the RPC names parsed from `cspy.thrift`.
 
@@ -329,6 +365,11 @@ Standard response envelope (AI-first tools):
   - `debugger_capabilities`
   - `debugger_wait_for_core_state`
   - `debugger_go_and_wait_for_core_state`
+  - `project_status`
+  - `project_get_files`
+  - `project_build`
+  - `project_get_launch_config`
+  - `project_configure_and_start_debug`
 - Timeout-style outcomes use `ok=false` with machine-readable `error.code` (for example `TIMEOUT`).
 - Use `debugger_error_taxonomy()` to discover known error codes/categories and recovery hints.
 - When available, structured error `details` may include `backend_diagnostics`
