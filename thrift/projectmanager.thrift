@@ -872,6 +872,9 @@ service ProjectManager extends shared.HeartbeatService
   // Ask for a CMake build directory, and attach the project to it.
   bool SelectAndAttachCMakeBuildDir(1: ProjectContext prj)
 
+  // Attach the project to a build directory.
+  bool AttachCMakeBuildDir(1: ProjectContext prj, 2: string buildDir)
+
   // Ask for a root CMakeLists.txt, and try to import it.
   bool SelectAndImportCMakeLists(1: ProjectContext prj)
 
@@ -960,6 +963,8 @@ service ProjectManager extends shared.HeartbeatService
   DebugLauncherInfo GetDebugLauncherInfo(1: ProjectContext prj, 2: Configuration configuration) throws (1:ProjectManagerError e);
   /** Reload the current launch file if one is provided. Throws if the reload fails or if no launch file has been specified */
   void ReloadLaunchFile(1: ProjectContext prj, 2: Configuration configuration) throws (1:ProjectManagerError e);
+  /** Set the launch file to use in the project. Leave launchName empty to select the first one in launch file.*/
+  void SetLaunchFile(1: ProjectContext prj, 2: Configuration configuration, 3: string launchFile, 4: string launchName, 5: bool activate) throws (1:ProjectManagerError e);
 
   //! If found, sets the specified CMake target as the debugger launch target.
   void SetCMakeDebugTarget(1: ProjectContext prj, 2: string target) throws (1:ProjectManagerError e);

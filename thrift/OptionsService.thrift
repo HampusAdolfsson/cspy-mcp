@@ -115,6 +115,11 @@ struct UpdateOptionsStateResponse
     2: Tree tree;
     3: shared.Success success;
     4: list<VerificationError> verificationErrors;
+    /** True when this change altered which option categories are visible
+     *  (per the OptionsService category-visibility rules). The client should
+     *  re-request GetCategoryTree and structurally rebuild the category
+     *  navigation. Defaults to false. */
+    5: bool categoryTreeInvalidated;
 }
 
 struct CommitOptionStateRequest
