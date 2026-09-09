@@ -24,6 +24,7 @@ from .cspy_server_manager import (
 )
 from .thrift_client import (
     ThriftBridgeError,
+    coerce_call_args,
     get_debugger_service,
     load_service_registry_module,
     load_thrift_module,
@@ -832,6 +833,7 @@ def _ensure_listwindow_frontend() -> dict[str, Any]:
 
 def _call_debugger(method: str, *args: Any, **kwargs: Any) -> Any:
     cfg = load_config()
+    args, kwargs = coerce_call_args(get_debugger_service(cfg), method, args, kwargs)
     with open_debugger_client(cfg) as client:
         fn = getattr(client, method, None)
         if fn is None or not callable(fn):
@@ -847,6 +849,7 @@ def _call_breakpoints(method: str, *args: Any, **kwargs: Any) -> Any:
     if bp_service is None:
         raise ThriftBridgeError("Service 'Breakpoints' not found in breakpoints.thrift")
 
+    args, kwargs = coerce_call_args(bp_service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "breakpoints")
     client = make_client(bp_service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -937,6 +940,7 @@ def _call_contextmanager(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'ContextManager' not found in cspy.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "debugger.contextmanager")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -959,6 +963,7 @@ def _call_memory(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'CSpyMemory' not found in memory.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "debugger.memory")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -981,6 +986,7 @@ def _call_disassembly(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'Disassembly' not found in disassembly.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "disassembly")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1003,6 +1009,7 @@ def _call_sourcelookup(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'SourceLookup' not found in sourcelookup.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "sourcelookup")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1025,6 +1032,7 @@ def _call_libsupport(method: str, *args: Any, **kwargs: Any) -> Any:
     if service is None:
         raise ThriftBridgeError("Service 'LibSupportService2' not found in libsupport.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     host, port = resolve_service_endpoint(cfg, "libsupport")
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1039,6 +1047,78 @@ def _call_libsupport(method: str, *args: Any, **kwargs: Any) -> Any:
             pass
 
 
+def _projectmanager_service_name() -> str:
+    return os.getenv(
+        "THRIFT_PROJECTMANAGER_SERVICE_NAME",
+        "com.iar.thrift.service.projectmanager",
+    )
+
+
+def _projectmanager_module() -> Any:
+    cfg = load_config()
+    thrift_path = _find_include_thrift(cfg.include_dirs, "projectmanager.thrift")
+    return load_thrift_module(str(thrift_path), tuple(cfg.include_dirs))
+
+
+def _call_projectmanager(method: str, *args: Any, **kwargs: Any) -> Any:
+    cfg = load_config()
+    mod = _projectmanager_module()
+    service = getattr(mod, "ProjectManager", None)
+    if service is None:
+        raise ThriftBridgeError("Service 'ProjectManager' not found in projectmanager.thrift")
+
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
+    service_name = _projectmanager_service_name()
+    try:
+        host, port = resolve_service_endpoint(cfg, service_name)
+    except ThriftBridgeError as exc:
+        raise ThriftBridgeError(
+            f"Could not resolve project manager service '{service_name}'. "
+            "This service is hosted by the IDE backend (e.g. started via run_iaride.sh), "
+            f"not by a standalone CSpyServer2. Underlying error: {exc}"
+        ) from exc
+    client = make_client(service, host, port, timeout=cfg.timeout_ms)
+    try:
+        fn = getattr(client, method, None)
+        if fn is None or not callable(fn):
+            raise ThriftBridgeError(f"ProjectManager method not found: {method}")
+        return _invoke_with_trace("projectmanager", method, fn, *args, **kwargs)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _resolve_project_and_config(project_path: str, config_name: str) -> tuple[dict[str, Any], str]:
+    """Resolve (ProjectContext dict, configuration name), defaulting to current ones.
+
+    Empty project_path means "the current project"; empty config_name means
+    "the current configuration of that project".
+    """
+    if project_path:
+        ctx = {"filename": str(project_path)}
+    else:
+        ctx = to_plain(_call_projectmanager("GetCurrentProject"))
+        if not isinstance(ctx, dict) or not ctx.get("filename"):
+            raise ThriftBridgeError(
+                "No current project. Load a workspace/project first "
+                "(project_load_workspace) or pass project_path explicitly."
+            )
+
+    if config_name:
+        return ctx, str(config_name)
+
+    current = to_plain(_call_projectmanager("GetCurrentConfiguration", ctx))
+    name = current.get("name") if isinstance(current, dict) else None
+    if not name:
+        raise ThriftBridgeError(
+            f"No current configuration for project {ctx.get('filename')!r}; "
+            "pass config_name explicitly."
+        )
+    return ctx, str(name)
+
+
 def _call_listwindow(service_name: str, method: str, *args: Any, **kwargs: Any) -> Any:
     cfg = load_config()
     thrift_path = _find_include_thrift(cfg.include_dirs, "listwindow.thrift")
@@ -1047,6 +1127,7 @@ def _call_listwindow(service_name: str, method: str, *args: Any, **kwargs: Any) 
     if service is None:
         raise ThriftBridgeError("Service 'ListWindowBackend' not found in listwindow.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     _ensure_listwindow_frontend()
     host = ""
     port = 0
@@ -1102,6 +1183,7 @@ def _call_trace_listwindow(service_name: str, method: str, *args: Any, **kwargs:
     if service is None:
         raise ThriftBridgeError("Service 'TraceListWindowBackend' not found in listwindow.thrift")
 
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
     _ensure_listwindow_frontend()
     snapshot = _list_registry_services("")
     exact = next((s for s in snapshot if s["name"] == service_name), None)
@@ -2728,10 +2810,12 @@ def debugger_call(method: str, args_json: str = "[]") -> Any:
     Returns:
         RPC result converted to JSON-serializable structure.
 
-    Caveats:
-        Complex thrift struct inputs are best handled by dedicated tools. Passing
-        nested struct payloads through this generic tool may fail depending on
-        thriftpy2 conversion behavior.
+    Struct and enum arguments:
+        JSON objects are coerced (recursively) into the thrift struct the method
+        expects, matched by field name — e.g. for evalExpression pass
+        `[{"type": "CurrentInspection", "level": 0, "core": 0, "task": 0}, "argc", [], 0, false]`.
+        Enum-typed fields accept the enum name as a string (with or without the
+        leading "k") or the raw integer value.
     """
     safe_pre_session_methods = {
         "getVersionString",
@@ -2789,5 +2873,307 @@ def debugger_call(method: str, args_json: str = "[]") -> Any:
     elif method == "stopSession":
         _set_session_state(configured=False, started=False)
         _clear_runtime_session_caches()
+
+    return to_plain(result)
+
+
+# ---------------------------------------------------------------------------
+# ProjectManager service tools (build/debug/edit loop)
+#
+# These talk to the ProjectManager thrift service (projectmanager.thrift),
+# which is hosted by the IDE backend (iaride) rather than a standalone
+# CSpyServer2. They do not require an active debug session.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def project_load_workspace(file_path: str, fetch_dependency_data: bool = True) -> dict[str, Any]:
+    """Load an Embedded Workbench workspace (.eww) or project (.ewp).
+
+    For a .eww file this calls ProjectManager.LoadEwwFile (projects in the
+    workspace are loaded too). For a .ewp file it calls LoadEwpFile, which
+    loads the project into the (possibly anonymous) current workspace.
+
+    Args:
+        file_path: Absolute path to a .eww workspace or .ewp project file.
+        fetch_dependency_data: Also fetch build dependency data (default True).
+
+    Returns:
+        Overview of loaded projects and their build configurations.
+    """
+    path = str(file_path)
+    if path.lower().endswith(".ewp"):
+        _call_projectmanager("LoadEwpFile", path, bool(fetch_dependency_data))
+    else:
+        _call_projectmanager("LoadEwwFile", path, bool(fetch_dependency_data))
+    return project_status()
+
+
+@mcp.tool()
+def project_status() -> dict[str, Any]:
+    """Summarize project manager state: projects, configurations, current selection.
+
+    Returns:
+        Envelope whose data contains has_workspace, the loaded projects, and for
+        each project its build configurations plus the current configuration.
+    """
+    has_workspace = bool(_call_projectmanager("HasWorkspace"))
+    projects = to_plain(_call_projectmanager("GetProjects")) or []
+
+    current_project: dict[str, Any] | None = None
+    try:
+        current_project = to_plain(_call_projectmanager("GetCurrentProject"))
+    except Exception:  # noqa: BLE001 - no current project is a normal state
+        current_project = None
+
+    out_projects: list[dict[str, Any]] = []
+    for prj in projects:
+        entry: dict[str, Any] = {"project": prj}
+        try:
+            entry["configurations"] = to_plain(_call_projectmanager("GetConfigurations", prj))
+        except Exception as exc:  # noqa: BLE001
+            entry["configurations_error"] = str(exc)
+        try:
+            entry["current_configuration"] = to_plain(
+                _call_projectmanager("GetCurrentConfiguration", prj)
+            )
+        except Exception as exc:  # noqa: BLE001
+            entry["current_configuration_error"] = str(exc)
+        out_projects.append(entry)
+
+    data = {
+        "has_workspace": has_workspace,
+        "current_project": current_project,
+        "projects": out_projects,
+    }
+    return _response_envelope(ok=True, tool="project_status", data=data)
+
+
+@mcp.tool()
+def project_get_files(
+    project_path: str = "",
+    config_name: str = "",
+    collection: str = "ProjFiles",
+) -> dict[str, Any]:
+    """List files belonging to a project configuration.
+
+    Args:
+        project_path: .ewp path; empty means the current project.
+        config_name: Configuration name (e.g. 'Debug'); empty means the current one.
+        collection: FileCollectionType name: ProjFiles, ProjAndUserIncludeFiles,
+            ProjAndAllIncludeFiles, WsFiles, WsAndUserIncludeFiles, WsAndAllIncludeFiles.
+    """
+    ctx, cfg_name = _resolve_project_and_config(project_path, config_name)
+    mod = _projectmanager_module()
+    col = getattr(mod.FileCollectionType, str(collection), None)
+    if col is None:
+        valid = [n for n in dir(mod.FileCollectionType) if not n.startswith("_") and n[0].isupper()]
+        raise ThriftBridgeError(f"Unknown collection {collection!r}; expected one of {valid}")
+
+    files = to_plain(_call_projectmanager("GetFiles", ctx, cfg_name, col)) or []
+    data = {
+        "project": ctx,
+        "configuration": cfg_name,
+        "collection": str(collection),
+        "file_count": len(files),
+        "files": files,
+    }
+    return _response_envelope(ok=True, tool="project_get_files", data=data)
+
+
+def _build_project(
+    ctx: dict[str, Any],
+    cfg_name: str,
+    num_parallel_builds: int,
+    max_output_lines: int,
+) -> dict[str, Any]:
+    result = to_plain(
+        _call_projectmanager("BuildProject", ctx, cfg_name, int(num_parallel_builds))
+    )
+    output = result.get("buildOutput") or [] if isinstance(result, dict) else []
+    limit = max(1, int(max_output_lines))
+    # Field is spelled 'succeded' in projectmanager.thrift.
+    return {
+        "project": ctx,
+        "configuration": cfg_name,
+        "succeeded": bool(result.get("succeded", False)) if isinstance(result, dict) else False,
+        "output_lines_total": len(output),
+        "output_tail": output[-limit:],
+    }
+
+
+@mcp.tool()
+def project_build(
+    project_path: str = "",
+    config_name: str = "",
+    num_parallel_builds: int = 4,
+    max_output_lines: int = 200,
+) -> dict[str, Any]:
+    """Build a project configuration synchronously via ProjectManager.BuildProject.
+
+    A failed build is reported as ok=False with the tool output tail in data;
+    it does not raise, so build errors stay readable.
+
+    Args:
+        project_path: .ewp path; empty means the current project.
+        config_name: Configuration name; empty means the current one.
+        num_parallel_builds: Parallel build jobs.
+        max_output_lines: Maximum trailing build-output lines to return.
+    """
+    ctx, cfg_name = _resolve_project_and_config(project_path, config_name)
+    data = _build_project(ctx, cfg_name, num_parallel_builds, max_output_lines)
+    if data["succeeded"]:
+        return _response_envelope(ok=True, tool="project_build", data=data)
+    return _response_envelope(
+        ok=False,
+        tool="project_build",
+        data=data,
+        error=_error_entry(
+            code="BUILD_FAILED",
+            category="build",
+            message=f"Build of {cfg_name!r} in {ctx.get('filename')!r} failed; see data.output_tail.",
+            retryable=False,
+        ),
+    )
+
+
+@mcp.tool()
+def project_get_launch_config(project_path: str = "", config_name: str = "") -> dict[str, Any]:
+    """Get the debug launch configuration for a project configuration.
+
+    Calls ProjectManager.GetLaunchConfigurationForConfiguration and returns the
+    shared.LaunchConfiguration as JSON. This is the proper way to initialize a
+    debug session for a project: the result can be passed directly to
+    Debugger.configureSession (see project_configure_and_start_debug), with no
+    hand-written launch.json needed.
+
+    Args:
+        project_path: .ewp path; empty means the current project.
+        config_name: Configuration name; empty means the current one.
+    """
+    ctx, cfg_name = _resolve_project_and_config(project_path, config_name)
+    launch = to_plain(
+        _call_projectmanager("GetLaunchConfigurationForConfiguration", ctx, cfg_name)
+    )
+    data = {
+        "project": ctx,
+        "configuration": cfg_name,
+        "launch_configuration": launch,
+    }
+    return _response_envelope(ok=True, tool="project_get_launch_config", data=data)
+
+
+@mcp.tool()
+def project_configure_and_start_debug(
+    project_path: str = "",
+    config_name: str = "",
+    build_first: bool = True,
+    start_session: bool = True,
+    num_parallel_builds: int = 4,
+    max_output_lines: int = 200,
+) -> dict[str, Any]:
+    """One-call build/debug loop shortcut: build, then configure and start a debug session.
+
+    Steps:
+    1) optional ProjectManager.BuildProject (stops here with ok=False if the build fails)
+    2) ProjectManager.GetLaunchConfigurationForConfiguration
+    3) Debugger.configureSession with that launch configuration
+    4) optional Debugger.startSMPSession
+
+    Args:
+        project_path: .ewp path; empty means the current project.
+        config_name: Configuration name; empty means the current one.
+        build_first: Build before configuring the session (default True).
+        start_session: Start the SMP session after configuring (default True).
+        num_parallel_builds: Parallel build jobs when building.
+        max_output_lines: Maximum trailing build-output lines to return.
+    """
+    ctx, cfg_name = _resolve_project_and_config(project_path, config_name)
+    data: dict[str, Any] = {"project": ctx, "configuration": cfg_name}
+
+    if build_first:
+        build_data = _build_project(ctx, cfg_name, num_parallel_builds, max_output_lines)
+        data["build"] = build_data
+        if not build_data["succeeded"]:
+            return _response_envelope(
+                ok=False,
+                tool="project_configure_and_start_debug",
+                data=data,
+                error=_error_entry(
+                    code="BUILD_FAILED",
+                    category="build",
+                    message=f"Build of {cfg_name!r} in {ctx.get('filename')!r} failed; "
+                    "session was not configured. See data.build.output_tail.",
+                    retryable=False,
+                ),
+            )
+
+    launch = to_plain(
+        _call_projectmanager("GetLaunchConfigurationForConfiguration", ctx, cfg_name)
+    )
+    data["launch_configuration"] = launch
+
+    try:
+        _ensure_debug_eventhandler()
+        _ensure_libsupport()
+        _call_debugger("configureSession", launch)
+    except Exception as exc:  # noqa: BLE001
+        _set_session_state(configured=False, started=False)
+        _clear_runtime_session_caches()
+        raise ThriftBridgeError(
+            "project_configure_and_start_debug failed during configureSession. "
+            f"Local lifecycle state was reset. Backend error: {exc}"
+        ) from exc
+
+    _clear_runtime_session_caches()
+    _set_session_state(configured=True, started=False)
+    data["configured"] = True
+
+    if start_session:
+        try:
+            _call_debugger("startSMPSession")
+        except Exception as exc:  # noqa: BLE001
+            _set_session_state(started=False)
+            raise ThriftBridgeError(
+                "project_configure_and_start_debug failed during startSMPSession. "
+                "Session remains configured but not started. "
+                f"Backend error: {exc}"
+            ) from exc
+        _set_session_state(started=True)
+        data["started"] = True
+    else:
+        data["started"] = False
+
+    return _response_envelope(ok=True, tool="project_configure_and_start_debug", data=data)
+
+
+@mcp.tool()
+def projectmanager_call(method: str, args_json: str = "[]") -> Any:
+    """Call an arbitrary ProjectManager RPC method (fallback for unwrapped methods).
+
+    Args:
+        method: RPC method name on ProjectManager (e.g. 'GetToolchains').
+        args_json: Arguments encoded as JSON. Supported forms:
+            - JSON list for positional arguments
+            - JSON object for keyword arguments
+            - Any other JSON value treated as one positional argument
+
+    Struct and enum arguments:
+        JSON objects are coerced (recursively) into the thrift struct the method
+        expects, matched by field name — e.g. a ProjectContext is
+        `{"filename": "/abs/path/to/project.ewp"}`. Enum-typed fields accept the
+        enum name as a string or the raw integer value.
+    """
+    try:
+        parsed = json.loads(args_json)
+    except json.JSONDecodeError as exc:
+        raise ThriftBridgeError(f"Invalid JSON in args_json: {exc}") from exc
+
+    if isinstance(parsed, list):
+        result = _call_projectmanager(method, *parsed)
+    elif isinstance(parsed, dict):
+        result = _call_projectmanager(method, **parsed)
+    else:
+        result = _call_projectmanager(method, parsed)
 
     return to_plain(result)

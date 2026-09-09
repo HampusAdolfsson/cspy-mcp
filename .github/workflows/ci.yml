@@ -29,7 +29,9 @@ jobs:
         run: python -m compileall -q mcp_thrift_server examples scripts tests
 
       - name: Run unit tests
-        run: pytest -q tests/test_server_tools_unit.py
+        run: >
+          pytest -q tests/test_server_tools_unit.py
+          tests/test_coerce_args_unit.py tests/test_projectmanager_tools_unit.py
 
   live-sim:
     name: Live simulator tests (cxarm)

@@ -8,6 +8,7 @@ from typing import Any, Iterator
 
 import thriftpy2
 from thriftpy2.rpc import make_client
+from thriftpy2.thrift import TType
 
 from .config import ThriftConfig
 from .cspy_server_manager import apply_managed_registry_to_config
@@ -180,3 +181,107 @@ def to_plain(value: Any) -> Any:
         return {k: to_plain(v) for k, v in vars(value).items() if not k.startswith("_")}
 
     return repr(value)
+
+
+def _split_container_spec(spec: Any) -> tuple[int, Any]:
+    # Container element/key/value specs are either a bare TType int or a
+    # (ttype, nested_info) tuple for structs and nested containers.
+    if isinstance(spec, tuple):
+        return spec[0], spec[1]
+    return spec, None
+
+
+def _enum_value_from_name(enum_cls: Any, name: str, field_name: str) -> int:
+    for candidate in (name, f"k{name}"):
+        value = getattr(enum_cls, candidate, None)
+        if isinstance(value, int):
+            return value
+    names = sorted(getattr(enum_cls, "_NAMES_TO_VALUES", {}))
+    raise ThriftBridgeError(
+        f"Unknown {enum_cls.__name__} name {name!r} for field '{field_name}'."
+        + (f" Valid names: {', '.join(names)}" if names else "")
+    )
+
+
+def _coerce_value(value: Any, ttype: int, type_info: Any, field_name: str) -> Any:
+    """Coerce a JSON-shaped value into what thriftpy2's encoder expects."""
+    if value is None:
+        return None
+
+    if ttype == TType.STRUCT:
+        # Already a struct instance: pass through. Checked via thrift_spec, not
+        # isinstance, because the same IDL struct may be loaded as distinct
+        # classes (e.g. shared.thrift loaded directly and via cspy.thrift).
+        if hasattr(value, "thrift_spec"):
+            return value
+        if not isinstance(value, dict):
+            field_names = [spec[1] for spec in type_info.thrift_spec.values()]
+            raise ThriftBridgeError(
+                f"Field '{field_name}' expects a {type_info.__name__} struct; pass a JSON "
+                f"object with fields: {', '.join(field_names)} (got {type(value).__name__})"
+            )
+        known = {spec[1]: spec for spec in type_info.thrift_spec.values()}
+        unknown = sorted(set(value) - set(known))
+        if unknown:
+            raise ThriftBridgeError(
+                f"Unknown field(s) {', '.join(unknown)} for struct {type_info.__name__} "
+                f"in '{field_name}'. Valid fields: {', '.join(sorted(known))}"
+            )
+        inst = type_info()
+        for name, spec in known.items():
+            if name in value:
+                inner_ttype = spec[0]
+                inner_info = spec[2] if len(spec) == 4 else None
+                setattr(inst, name, _coerce_value(value[name], inner_ttype, inner_info, name))
+        return inst
+
+    if ttype == TType.I32 and type_info is not None and isinstance(value, str):
+        return _enum_value_from_name(type_info, value, field_name)
+
+    if ttype in (TType.LIST, TType.SET) and isinstance(value, (list, tuple)):
+        elem_ttype, elem_info = _split_container_spec(type_info)
+        return [_coerce_value(v, elem_ttype, elem_info, field_name) for v in value]
+
+    if ttype == TType.MAP and isinstance(value, dict):
+        key_spec, val_spec = type_info
+        key_ttype, key_info = _split_container_spec(key_spec)
+        val_ttype, val_info = _split_container_spec(val_spec)
+        return {
+            _coerce_value(k, key_ttype, key_info, field_name):
+                _coerce_value(v, val_ttype, val_info, field_name)
+            for k, v in value.items()
+        }
+
+    return value
+
+
+def coerce_call_args(
+    service_cls: Any, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Coerce JSON-shaped call arguments to the method's thrift arg types.
+
+    Dicts become struct instances (recursively), enum names become their int
+    values. Values already of the right type pass through unchanged, so this
+    is a no-op for callers that construct thrift structs themselves.
+    """
+    args_cls = getattr(service_cls, f"{method}_args", None)
+    spec = getattr(args_cls, "thrift_spec", None)
+    if not spec:
+        return args, kwargs
+
+    field_specs = [spec[fid] for fid in sorted(spec)]
+
+    def coerce_field(field_spec: Any, value: Any) -> Any:
+        ttype = field_spec[0]
+        type_info = field_spec[2] if len(field_spec) == 4 else None
+        return _coerce_value(value, ttype, type_info, field_spec[1])
+
+    new_args = tuple(
+        coerce_field(field_specs[i], v) if i < len(field_specs) else v
+        for i, v in enumerate(args)
+    )
+    by_name = {field_spec[1]: field_spec for field_spec in field_specs}
+    new_kwargs = {
+        k: coerce_field(by_name[k], v) if k in by_name else v for k, v in kwargs.items()
+    }
+    return new_args, new_kwargs
