@@ -33,6 +33,26 @@ def _parse_args() -> argparse.Namespace:
         help="Optional CSpyServer2 args string (default: -standalone -sockets)",
     )
     parser.add_argument(
+        "--service-launcher",
+        dest="service_launcher",
+        default=None,
+        help=(
+            "Path to IarServiceLauncher. Enables launcher mode: the launcher owns "
+            "the service registry and hosts the IDE services (ProjectManager, "
+            "OptionsService), and a CSpyServer2 given via --cspyserver2 joins that "
+            "same registry."
+        ),
+    )
+    parser.add_argument(
+        "--ide-services",
+        dest="ide_services",
+        default=None,
+        help=(
+            "Comma-separated IDE services to host: projectmanager, options "
+            "(default: all)."
+        ),
+    )
+    parser.add_argument(
         "--probe-cspyserver2",
         action="store_true",
         help="Start managed CSpyServer2, print parsed registry info, then exit.",
@@ -68,14 +88,26 @@ def main() -> None:
         if args.web_port is not None:
             os.environ["MCP_PORT"] = str(int(args.web_port))
 
+    if args.service_launcher:
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "launcher"
+        os.environ["THRIFT_SERVICE_LAUNCHER_EXE"] = args.service_launcher
+        os.environ.pop("THRIFT_REGISTRY_PORT", None)
+        os.environ.pop("THRIFT_REGISTRY_HOST", None)
+    if args.ide_services is not None:
+        os.environ["THRIFT_IDE_SERVICES"] = args.ide_services
+
     if args.cspyserver2:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
+        # Launcher mode already implies a managed CSpyServer2, joining the
+        # launcher's registry rather than starting one of its own.
+        if not args.service_launcher:
+            os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
         os.environ["THRIFT_CSPYSERVER_EXE"] = args.cspyserver2
         # Avoid stale external-mode registry env vars pinning managed startup
         # to an old/conflicting port. Managed mode can still use fixed registry
         # by passing --cspyserver2-args "... -registry <port>".
-        os.environ.pop("THRIFT_REGISTRY_PORT", None)
-        os.environ.pop("THRIFT_REGISTRY_HOST", None)
+        if not args.service_launcher:
+            os.environ.pop("THRIFT_REGISTRY_PORT", None)
+            os.environ.pop("THRIFT_REGISTRY_HOST", None)
     if args.cspyserver2_args:
         os.environ["THRIFT_CSPYSERVER_ARGS"] = args.cspyserver2_args
 
@@ -89,7 +121,7 @@ def main() -> None:
         os.environ["THRIFT_REGISTRY_SERVICE"] = str(args.registry_service)
 
     cfg = load_config()
-    if cfg.cspy_mode == "managed":
+    if cfg.cspy_mode in {"managed", "launcher"}:
         host, port = ensure_managed_server(cfg)
         if args.probe_cspyserver2:
             status = managed_server_status()

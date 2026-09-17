@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .config import ThriftConfig
+from .service_launcher import ensure_launcher_registry
 
 _PORT_PATTERN = re.compile(r"Service registry running on local socket on port:\s*(\d+)")
 
@@ -112,8 +113,23 @@ def _cleanup_process_locked() -> None:
 
 
 def _require_managed_mode(cfg: ThriftConfig) -> None:
-    if cfg.cspy_mode != "managed":
-        raise RuntimeError("Managed CSpyServer is only available in THRIFT_CSPYSERVER_MODE=managed")
+    if cfg.cspy_mode not in {"managed", "launcher"}:
+        raise RuntimeError(
+            "Managed CSpyServer is only available in "
+            "THRIFT_CSPYSERVER_MODE=managed or =launcher"
+        )
+
+
+def _cspy_args(cfg: ThriftConfig, join_registry_port: int | None) -> list[str]:
+    """Arguments for the CSpyServer2 process.
+
+    In launcher mode CSpyServer2 must not start a registry of its own: it joins
+    the IarServiceLauncher-owned one with `-registry <port>`, so the debugger
+    services and the IDE services end up in a single registry.
+    """
+    if join_registry_port is None:
+        return list(cfg.cspy_args)
+    return ["-sockets", "-registry", str(int(join_registry_port))]
 
 
 def _effective_registry_host(cfg: ThriftConfig) -> str:
@@ -151,9 +167,9 @@ def _refresh_stdout_tail_locked() -> None:
         _STATE.registry_port_event.set()
 
 
-def _start_process_locked(cfg: ThriftConfig) -> None:
+def _start_process_locked(cfg: ThriftConfig, join_registry_port: int | None = None) -> None:
     exe = _resolve_executable(cfg)
-    cmd = [str(exe), *cfg.cspy_args]
+    cmd = [str(exe), *_cspy_args(cfg, join_registry_port)]
 
     tmp = tempfile.NamedTemporaryFile(prefix="cspyserver2-", suffix=".log", delete=False)
     tmp_path = Path(tmp.name)
@@ -229,6 +245,19 @@ def _is_running_and_healthy_locked(cfg: ThriftConfig) -> bool:
 def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
     _require_managed_mode(cfg)
 
+    join_port: int | None = None
+    if cfg.cspy_mode == "launcher":
+        # The launcher owns the registry in this mode, so it comes up first and
+        # its endpoint is what everything resolves through - whether or not a
+        # CSpyServer2 is configured on top of it.
+        host, join_port = ensure_launcher_registry(cfg)
+        os.environ["THRIFT_REGISTRY_PORT"] = str(join_port)
+        os.environ.setdefault("THRIFT_REGISTRY_HOST", host)
+        if cfg.cspy_executable is None:
+            # IDE-services-only setup: project/options tools work, debugger
+            # tools will fail to resolve `debugger` with a clear registry error.
+            return host, int(join_port)
+
     with _STATE.lock:
         if _is_running_and_healthy_locked(cfg):
             return _effective_registry_host(cfg), int(_STATE.registry_port)
@@ -242,8 +271,14 @@ def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
         attempts = 2 if cfg.cspy_restart_on_failure else 1
         for _ in range(attempts):
             try:
-                _start_process_locked(cfg)
+                _start_process_locked(cfg, join_port)
                 port = _wait_for_registry_port_locked(cfg)
+                if join_port is not None and int(port) != int(join_port):
+                    raise RuntimeError(
+                        f"CSpyServer2 was asked to join registry port {join_port} but "
+                        f"reported port {port}; it did not attach to the "
+                        "IarServiceLauncher registry"
+                    )
                 os.environ["THRIFT_REGISTRY_PORT"] = str(port)
                 os.environ.setdefault("THRIFT_REGISTRY_HOST", _effective_registry_host(cfg))
                 return _effective_registry_host(cfg), int(port)
@@ -255,7 +290,7 @@ def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
 
 
 def apply_managed_registry_to_config(cfg: ThriftConfig) -> ThriftConfig:
-    if cfg.cspy_mode != "managed":
+    if cfg.cspy_mode not in {"managed", "launcher"}:
         return cfg
     host, port = ensure_managed_server(cfg)
     return replace(cfg, registry_host=host, registry_port=int(port))

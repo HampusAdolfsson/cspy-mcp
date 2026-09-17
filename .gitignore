@@ -5,3 +5,5 @@ __pycache__/
 # Runtime/build artifacts from live backend testing
 CSpyServer2-ServiceRegistry.txt
 tests/live_assets/Debug/Obj/
+# Left behind by the project manager when it opens a project
+*.dnx.lock

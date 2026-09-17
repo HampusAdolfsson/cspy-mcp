@@ -21,6 +21,12 @@ class ThriftConfig:
     cspy_args: list[str]
     cspy_start_timeout_ms: int
     cspy_restart_on_failure: bool
+    launcher_executable: Path | None
+    launcher_start_timeout_ms: int
+    launcher_restart_on_failure: bool
+    service_bin_dir: Path | None
+    ide_services: list[str]
+    auto_ide_services: bool
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -54,6 +60,13 @@ def _split_args(raw: str | None) -> list[str]:
     return [p for p in shlex.split(raw, posix=False) if p]
 
 
+def _split_services(raw: str | None) -> list[str]:
+    """Parse THRIFT_IDE_SERVICES; empty means every known IDE service."""
+    if raw is None or not raw.strip():
+        return []
+    return [part.strip().lower() for part in raw.replace(";", ",").split(",") if part.strip()]
+
+
 def load_config() -> ThriftConfig:
     host = os.getenv("THRIFT_HOST", "127.0.0.1")
     port = int(os.getenv("THRIFT_PORT", "9090"))
@@ -78,7 +91,7 @@ def load_config() -> ThriftConfig:
     registry_service_name = os.getenv("THRIFT_REGISTRY_SERVICE", "debugger")
 
     cspy_mode = os.getenv("THRIFT_CSPYSERVER_MODE", "managed").strip().lower()
-    if cspy_mode not in {"external", "managed"}:
+    if cspy_mode not in {"external", "managed", "launcher"}:
         cspy_mode = "managed"
 
     cspy_executable_raw = os.getenv("THRIFT_CSPYSERVER_EXE")
@@ -86,6 +99,29 @@ def load_config() -> ThriftConfig:
     cspy_args = _split_args(os.getenv("THRIFT_CSPYSERVER_ARGS"))
     cspy_start_timeout_ms = int(os.getenv("THRIFT_CSPYSERVER_START_TIMEOUT_MS", "20000"))
     cspy_restart_on_failure = _env_bool("THRIFT_CSPYSERVER_RESTART_ON_FAILURE", True)
+
+    launcher_executable_raw = os.getenv("THRIFT_SERVICE_LAUNCHER_EXE")
+    launcher_executable = (
+        Path(launcher_executable_raw).expanduser().resolve()
+        if launcher_executable_raw
+        else None
+    )
+    # IarServiceLauncher has to dlopen/LoadLibrary the service implementation
+    # (and, for ProjectManager, the whole legacy project manager behind it), so
+    # it is noticeably slower to become ready than CSpyServer2.
+    launcher_start_timeout_ms = int(
+        os.getenv("THRIFT_SERVICE_LAUNCHER_START_TIMEOUT_MS", "40000")
+    )
+    launcher_restart_on_failure = _env_bool(
+        "THRIFT_SERVICE_LAUNCHER_RESTART_ON_FAILURE", True
+    )
+
+    service_bin_dir_raw = os.getenv("THRIFT_SERVICE_BIN_DIR")
+    service_bin_dir = (
+        Path(service_bin_dir_raw).expanduser().resolve() if service_bin_dir_raw else None
+    )
+    ide_services = _split_services(os.getenv("THRIFT_IDE_SERVICES"))
+    auto_ide_services = _env_bool("THRIFT_AUTO_IDE_SERVICES", True)
 
     return ThriftConfig(
         host=host,
@@ -101,4 +137,10 @@ def load_config() -> ThriftConfig:
         cspy_args=cspy_args,
         cspy_start_timeout_ms=cspy_start_timeout_ms,
         cspy_restart_on_failure=cspy_restart_on_failure,
+        launcher_executable=launcher_executable,
+        launcher_start_timeout_ms=launcher_start_timeout_ms,
+        launcher_restart_on_failure=launcher_restart_on_failure,
+        service_bin_dir=service_bin_dir,
+        ide_services=ide_services,
+        auto_ide_services=auto_ide_services,
     )

@@ -22,6 +22,19 @@ from .cspy_server_manager import (
     managed_server_status,
     shutdown_managed_server,
 )
+from .service_launcher import (
+    IDE_SERVICES,
+    SERVICE_MANAGER_SERVICE,
+    service_dependencies,
+    launcher_crash_diagnostics,
+    launcher_status,
+    loaded_manifests,
+    normalize_service_keys,
+    note_manifest_loaded,
+    resolve_manifest,
+    service_bin_dir,
+    shutdown_service_launcher,
+)
 from .thrift_client import (
     ThriftBridgeError,
     coerce_call_args,
@@ -365,10 +378,15 @@ def _classify_error(exc: Exception, fallback_code: str = "UNKNOWN_ERROR") -> dic
     text = _format_cspy_exception_for_humans(exc)
     low = text.lower()
     diagnostics = managed_server_crash_diagnostics() if _should_attach_backend_diagnostics(text) else ""
+    launcher_diagnostics = (
+        launcher_crash_diagnostics() if _should_attach_backend_diagnostics(text) else ""
+    )
 
     def _with_diag(entry: dict[str, Any]) -> dict[str, Any]:
         if diagnostics:
             entry["backend_diagnostics"] = diagnostics
+        if launcher_diagnostics:
+            entry["service_launcher_diagnostics"] = launcher_diagnostics
         return entry
 
     if "timed out" in low or "timeout" in low:
@@ -1047,10 +1065,141 @@ def _call_libsupport(method: str, *args: Any, **kwargs: Any) -> Any:
             pass
 
 
+# ---------------------------------------------------------------------------
+# IDE platform services (ProjectManager, OptionsService)
+#
+# These are not hosted by CSpyServer2 - it has no service manager and cannot
+# load service libraries. They live in dynamic libraries in the same
+# <install>/common/bin and are hosted by IarServiceLauncher, which also runs a
+# `com.iar.thrift.service.manager` service able to load further service
+# manifests at runtime. See service_launcher.py for the details.
+# ---------------------------------------------------------------------------
+
+_IDE_SERVICE_LOCK = threading.Lock()
+# Short service keys already observed in the registry. Only a cache; cleared
+# whenever an RPC against the service fails, so a restarted backend re-checks.
+_IDE_SERVICES_PRESENT: set[str] = set()
+
+
+def _registry_service_names() -> set[str]:
+    return {entry["name"] for entry in _list_registry_services("")}
+
+
+def _load_service_manifest(cfg: Any, manifest: Path) -> None:
+    """Have the backend's ServiceManager load a service manifest file."""
+    include_dirs = tuple(cfg.include_dirs)
+    thrift_path = _find_include_thrift(cfg.include_dirs, "ServiceManager.thrift")
+    mod = load_thrift_module(str(thrift_path), include_dirs)
+    service = getattr(mod, "CSpyServiceManager", None)
+    if service is None:
+        raise ThriftBridgeError("Service 'CSpyServiceManager' not found in ServiceManager.thrift")
+
+    host, port = resolve_service_endpoint(cfg, SERVICE_MANAGER_SERVICE)
+    # Loading ProjectManagerHandler pulls in the whole legacy project manager,
+    # so this call is far slower than a normal RPC.
+    timeout_ms = max(int(cfg.timeout_ms), int(cfg.launcher_start_timeout_ms))
+    client = make_client(service, host, port, timeout=timeout_ms)
+    try:
+        _invoke_with_trace(
+            "servicemanager",
+            "startServicesFromJsonManifest",
+            client.startServicesFromJsonManifest,
+            str(manifest),
+        )
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _ensure_ide_service(key: str, force: bool = False) -> dict[str, Any]:
+    """Make sure one IDE service is registered, starting it if it is not.
+
+    Returns a status entry describing what was found or done. Raises
+    ThriftBridgeError when the service is absent and cannot be started.
+    """
+    spec = IDE_SERVICES[key]
+    registry_name = spec["registry_name"]
+
+    # Some services reach each other by linkage rather than over Thrift, so a
+    # dependency has to be hosted in the same process and started first.
+    dependencies = [
+        _ensure_ide_service(dependency, force=force)
+        for dependency in service_dependencies(key)
+    ]
+
+    with _IDE_SERVICE_LOCK:
+        if not force and key in _IDE_SERVICES_PRESENT:
+            return {
+                "service": key,
+                "registry_name": registry_name,
+                "status": "cached",
+            }
+
+        cfg = load_config()
+        try:
+            cfg = apply_managed_registry_to_config(cfg)
+        except Exception as exc:  # noqa: BLE001
+            raise ThriftBridgeError(f"Failed to prepare the IAR backend: {exc}") from exc
+
+        if cfg.registry_port is None:
+            raise ThriftBridgeError(
+                f"Cannot reach IDE service {key!r} ({registry_name}): no service registry "
+                "configured. Either set THRIFT_CSPYSERVER_MODE=launcher plus "
+                "THRIFT_SERVICE_LAUNCHER_EXE so the bridge hosts the IDE services itself, "
+                "or point THRIFT_REGISTRY_HOST/THRIFT_REGISTRY_PORT at a backend that "
+                "already hosts them."
+            )
+
+        present = _registry_service_names()
+        if registry_name in present:
+            _IDE_SERVICES_PRESENT.add(key)
+            return {
+                "service": key,
+                "registry_name": registry_name,
+                "status": "already-registered",
+            }
+
+        if SERVICE_MANAGER_SERVICE not in present:
+            raise ThriftBridgeError(
+                f"IDE service {key!r} ({registry_name}) is not registered, and the backend "
+                f"has no {SERVICE_MANAGER_SERVICE} service to start it with. CSpyServer2 "
+                "alone cannot host IDE services: run the bridge with "
+                "THRIFT_CSPYSERVER_MODE=launcher (plus THRIFT_SERVICE_LAUNCHER_EXE), or "
+                "point it at an IarServiceLauncher/iaride backend. "
+                f"Services currently registered: {', '.join(sorted(present)) or '<none>'}."
+            )
+
+        manifest = resolve_manifest(cfg, key)
+        _load_service_manifest(cfg, manifest)
+        note_manifest_loaded(key, manifest)
+        _IDE_SERVICES_PRESENT.add(key)
+        return {
+            "service": key,
+            "registry_name": registry_name,
+            "status": "started",
+            "manifest": str(manifest),
+            "dependencies": dependencies,
+        }
+
+
+def _invalidate_ide_service(key: str) -> None:
+    with _IDE_SERVICE_LOCK:
+        _IDE_SERVICES_PRESENT.discard(key)
+
+
+def _auto_ensure_ide_service(key: str) -> None:
+    """Best-effort auto-start before an IDE service RPC (THRIFT_AUTO_IDE_SERVICES)."""
+    if not load_config().auto_ide_services:
+        return
+    _ensure_ide_service(key)
+
+
 def _projectmanager_service_name() -> str:
     return os.getenv(
         "THRIFT_PROJECTMANAGER_SERVICE_NAME",
-        "com.iar.thrift.service.projectmanager",
+        IDE_SERVICES["projectmanager"]["registry_name"],
     )
 
 
@@ -1061,6 +1210,7 @@ def _projectmanager_module() -> Any:
 
 
 def _call_projectmanager(method: str, *args: Any, **kwargs: Any) -> Any:
+    _auto_ensure_ide_service("projectmanager")
     cfg = load_config()
     mod = _projectmanager_module()
     service = getattr(mod, "ProjectManager", None)
@@ -1072,10 +1222,12 @@ def _call_projectmanager(method: str, *args: Any, **kwargs: Any) -> Any:
     try:
         host, port = resolve_service_endpoint(cfg, service_name)
     except ThriftBridgeError as exc:
+        _invalidate_ide_service("projectmanager")
         raise ThriftBridgeError(
             f"Could not resolve project manager service '{service_name}'. "
-            "This service is hosted by the IDE backend (e.g. started via run_iaride.sh), "
-            f"not by a standalone CSpyServer2. Underlying error: {exc}"
+            "This service is hosted by IarServiceLauncher or a Thrift-enabled iaride, "
+            "not by a standalone CSpyServer2 - see ide_services_status(). "
+            f"Underlying error: {exc}"
         ) from exc
     client = make_client(service, host, port, timeout=cfg.timeout_ms)
     try:
@@ -1088,6 +1240,72 @@ def _call_projectmanager(method: str, *args: Any, **kwargs: Any) -> Any:
             client.close()
         except Exception:
             pass
+
+
+def _options_service_name() -> str:
+    return os.getenv(
+        "THRIFT_OPTIONSSERVICE_SERVICE_NAME",
+        IDE_SERVICES["options"]["registry_name"],
+    )
+
+
+def _options_module() -> Any:
+    cfg = load_config()
+    thrift_path = _find_include_thrift(cfg.include_dirs, "OptionsService.thrift")
+    return load_thrift_module(str(thrift_path), tuple(cfg.include_dirs))
+
+
+def _call_options(method: str, *args: Any, **kwargs: Any) -> Any:
+    _auto_ensure_ide_service("options")
+    cfg = load_config()
+    mod = _options_module()
+    service = getattr(mod, "OptionsService", None)
+    if service is None:
+        raise ThriftBridgeError("Service 'OptionsService' not found in OptionsService.thrift")
+
+    args, kwargs = coerce_call_args(service, method, args, kwargs)
+    service_name = _options_service_name()
+    try:
+        host, port = resolve_service_endpoint(cfg, service_name)
+    except ThriftBridgeError as exc:
+        _invalidate_ide_service("options")
+        raise ThriftBridgeError(
+            f"Could not resolve options service '{service_name}'. "
+            "This service is hosted by IarServiceLauncher or a Thrift-enabled iaride, "
+            "not by a standalone CSpyServer2 - see ide_services_status(). "
+            f"Underlying error: {exc}"
+        ) from exc
+    client = make_client(service, host, port, timeout=cfg.timeout_ms)
+    try:
+        fn = getattr(client, method, None)
+        if fn is None or not callable(fn):
+            raise ThriftBridgeError(f"OptionsService method not found: {method}")
+        return _invoke_with_trace("options", method, fn, *args, **kwargs)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _options_id(value: str, id_type: str = "OptionsService") -> dict[str, str]:
+    """Build a shared.Id payload. Tools take bare strings for ergonomics."""
+    return {"value": str(value), "type": str(id_type)}
+
+
+def _options_check(response: Any, what: str) -> dict[str, Any]:
+    """Convert an OptionsService response and raise on a non-success result.
+
+    Every OptionsService response carries a `shared.Success {value,
+    failureMessage}` rather than throwing, so failures are silent unless
+    checked.
+    """
+    data = to_plain(response)
+    success = data.get("success") if isinstance(data, dict) else None
+    if isinstance(success, dict) and not success.get("value"):
+        message = success.get("failureMessage") or "<no failure message>"
+        raise ThriftBridgeError(f"OptionsService {what} failed: {message}")
+    return data
 
 
 def _resolve_project_and_config(project_path: str, config_name: str) -> tuple[dict[str, Any], str]:
@@ -1298,9 +1516,17 @@ def thrift_connection_info() -> dict[str, Any]:
         "cspy_args": cfg.cspy_args,
         "cspy_start_timeout_ms": cfg.cspy_start_timeout_ms,
         "cspy_restart_on_failure": cfg.cspy_restart_on_failure,
+        "service_launcher_exe": (
+            str(cfg.launcher_executable) if cfg.launcher_executable else None
+        ),
+        "service_bin_dir": str(cfg.service_bin_dir) if cfg.service_bin_dir else None,
+        "ide_services": cfg.ide_services or sorted(IDE_SERVICES),
+        "auto_ide_services": cfg.auto_ide_services,
     }
-    if cfg.cspy_mode == "managed":
+    if cfg.cspy_mode in {"managed", "launcher"}:
         info["managed_server"] = managed_server_status()
+    if cfg.cspy_mode == "launcher":
+        info["service_launcher"] = launcher_status()
     return info
 
 
@@ -1385,8 +1611,10 @@ def debugger_session_status() -> dict[str, Any]:
         "core_states": None,
     }
 
-    if cfg.cspy_mode == "managed":
+    if cfg.cspy_mode in {"managed", "launcher"}:
         status["managed_server"] = managed_server_status()
+    if cfg.cspy_mode == "launcher":
+        status["service_launcher"] = launcher_status()
 
     try:
         status["backend_online"] = bool(_call_debugger("isOnline"))
@@ -1857,8 +2085,10 @@ def debugger_capabilities() -> dict[str, Any]:
         "errors": [],
     }
 
-    if cfg.cspy_mode == "managed":
+    if cfg.cspy_mode in {"managed", "launcher"}:
         out["managed_server"] = managed_server_status()
+    if cfg.cspy_mode == "launcher":
+        out["service_launcher"] = launcher_status()
 
     try:
         out["backend_online"] = bool(_call_debugger("isOnline"))
@@ -3175,5 +3405,427 @@ def projectmanager_call(method: str, args_json: str = "[]") -> Any:
         result = _call_projectmanager(method, **parsed)
     else:
         result = _call_projectmanager(method, parsed)
+
+    return to_plain(result)
+
+
+# ---------------------------------------------------------------------------
+# IDE service hosting tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def ide_services_status() -> dict[str, Any]:
+    """Report how the IDE platform services (ProjectManager, OptionsService) are hosted.
+
+    Use this first when a `project_*` or `options_*` tool cannot reach its
+    service. It shows which backend mode is active, whether an
+    IarServiceLauncher is running, which services the registry currently holds,
+    and which manifest would be used to start each missing one.
+
+    Returns:
+        Envelope whose data contains mode, the service registry endpoint,
+        per-service presence, launcher process state and registered services.
+    """
+    cfg = load_config()
+
+    data: dict[str, Any] = {
+        "cspy_mode": cfg.cspy_mode,
+        "auto_ide_services": cfg.auto_ide_services,
+        "configured_services": cfg.ide_services or sorted(IDE_SERVICES),
+        "service_launcher_exe": (
+            str(cfg.launcher_executable) if cfg.launcher_executable else None
+        ),
+        "cspy_executable": str(cfg.cspy_executable) if cfg.cspy_executable else None,
+    }
+
+    try:
+        data["service_bin_dir"] = str(service_bin_dir(cfg))
+    except Exception as exc:  # noqa: BLE001
+        data["service_bin_dir"] = None
+        data["service_bin_dir_error"] = str(exc)
+
+    registered: list[str] = []
+    try:
+        # Querying the registry is what brings a launcher-mode backend up, so
+        # this has to happen before the launcher/manifest snapshots are taken
+        # or they would report the state from before that.
+        services = _list_registry_services("")
+        registered = [entry["name"] for entry in services]
+        data["registry_services"] = services
+    except Exception as exc:  # noqa: BLE001
+        data["registry_error"] = str(exc)
+
+    resolved = load_config()
+    data["registry_host"] = resolved.registry_host
+    data["registry_port"] = resolved.registry_port
+    data["loaded_manifests"] = loaded_manifests()
+    data["service_launcher"] = launcher_status()
+
+    data["has_service_manager"] = SERVICE_MANAGER_SERVICE in registered
+    data["services"] = {
+        key: {
+            "registry_name": spec["registry_name"],
+            "registered": spec["registry_name"] in registered,
+            "manifest": spec["manifest"],
+            "depends_on": list(service_dependencies(key)),
+        }
+        for key, spec in IDE_SERVICES.items()
+    }
+    return _response_envelope(ok=True, tool="ide_services_status", data=data)
+
+
+@mcp.tool()
+def ide_services_ensure(services: str = "", force: bool = False) -> dict[str, Any]:
+    """Start the IDE platform services so `project_*`/`options_*` tools can be used.
+
+    Normally unnecessary: those tools auto-start what they need (unless
+    THRIFT_AUTO_IDE_SERVICES=0). Call this to warm the services up front, or to
+    re-check after a backend restart.
+
+    Requires a backend that hosts a `com.iar.thrift.service.manager` service -
+    an IarServiceLauncher (which THRIFT_CSPYSERVER_MODE=launcher starts for
+    you) or a Thrift-enabled iaride. A bare CSpyServer2 cannot host them.
+
+    Args:
+        services: Comma-separated subset of 'projectmanager', 'options'.
+            Empty means the THRIFT_IDE_SERVICES selection, or all of them.
+        force: Re-check the registry even for services already seen.
+
+    Returns:
+        Envelope whose data lists, per service, whether it was already
+        registered or newly started and from which manifest.
+    """
+    cfg = load_config()
+    try:
+        keys = normalize_service_keys(services or cfg.ide_services)
+    except RuntimeError as exc:
+        raise ThriftBridgeError(str(exc)) from exc
+
+    results: list[dict[str, Any]] = []
+    failures = 0
+    for key in keys:
+        try:
+            results.append(_ensure_ide_service(key, force=bool(force)))
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            results.append(
+                {
+                    "service": key,
+                    "registry_name": IDE_SERVICES[key]["registry_name"],
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+
+    return _response_envelope(
+        ok=failures == 0,
+        tool="ide_services_ensure",
+        data={"requested": keys, "results": results},
+        error=None
+        if failures == 0
+        else _error_entry(
+            code="IDE_SERVICE_START_FAILED",
+            category="lifecycle",
+            message=f"{failures} of {len(keys)} IDE service(s) could not be started.",
+            retryable=True,
+            details={"hint": "Call ide_services_status() for the registry contents."},
+        ),
+    )
+
+
+@mcp.tool()
+def ide_services_stop_launcher() -> dict[str, Any]:
+    """Stop the IarServiceLauncher this bridge started, if any.
+
+    Only affects a launcher owned by this process (THRIFT_CSPYSERVER_MODE=launcher);
+    an externally started launcher or iaride is left alone. Note that in
+    launcher mode the launcher owns the service registry, so stopping it also
+    takes the managed CSpyServer2's registry away - expect to restart both.
+    """
+    before = launcher_status()
+    shutdown_service_launcher()
+    with _IDE_SERVICE_LOCK:
+        _IDE_SERVICES_PRESENT.clear()
+    return _response_envelope(
+        ok=True,
+        tool="ide_services_stop_launcher",
+        data={"was_running": before.get("running"), "previous": before},
+    )
+
+
+# ---------------------------------------------------------------------------
+# OptionsService tools (build/debug option GUI model)
+#
+# OptionsService (OptionsService.thrift) is the presentation-level view of a
+# configuration's options: it serves the same category/option tree the IDE's
+# options dialog renders, as XML, and validates edits before they are
+# committed. It is session based - create a session for a project
+# configuration, read trees, push values, commit, destroy.
+#
+# For direct, non-GUI option access (a flat list of option ids and values) use
+# ProjectManager's GetOptionsForConfiguration/ApplyOptionsForConfiguration via
+# projectmanager_call instead.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def options_create_session(
+    project_path: str = "",
+    config_name: str = "",
+    node_path_or_index: str = "",
+    show_hidden_options: bool = False,
+) -> dict[str, Any]:
+    """Open an OptionsService session for a project configuration.
+
+    Args:
+        project_path: Absolute .ewp path; empty means the current project.
+        config_name: Configuration name (e.g. 'Debug'); empty means the current one.
+        node_path_or_index: Empty for configuration-level options; otherwise a
+            project node name or index to edit file/group-level options.
+        show_hidden_options: Include options the IDE hides.
+
+    Returns:
+        Envelope whose data contains session_id (pass it to the other
+        options_* tools), the resolved project/configuration, and read_only.
+
+    Notes:
+        Sessions hold backend state - call options_destroy_session when done.
+        Reading options can mutate the configuration (some target options
+        persist derived values), so treat a session as a transaction: do the
+        reads and writes you need, then commit or destroy it.
+    """
+    ctx, cfg_name = _resolve_project_and_config(project_path, config_name)
+    request = {
+        "projectPath": str(ctx.get("filename", "")),
+        "configurationName": cfg_name,
+        "nodePathOrIndex": str(node_path_or_index),
+        "showHiddenOptions": bool(show_hidden_options),
+    }
+    try:
+        data = _options_check(_call_options("CreateSession", request), "CreateSession")
+    except ThriftBridgeError as exc:
+        # OptionsService resolves the path through the project manager, so the
+        # project has to be loaded there first - passing a path is not enough.
+        if "Project not found" in str(exc):
+            raise ThriftBridgeError(
+                f"{exc}. Load it into the project manager first with "
+                f'project_load_workspace("{request["projectPath"]}").'
+            ) from exc
+        raise
+
+    session = data.get("sessionId") if isinstance(data, dict) else None
+    return _response_envelope(
+        ok=True,
+        tool="options_create_session",
+        data={
+            "session_id": (session or {}).get("value") if isinstance(session, dict) else None,
+            "project": ctx,
+            "configuration": cfg_name,
+            "read_only": data.get("readOnly") if isinstance(data, dict) else None,
+            "response": data,
+        },
+    )
+
+
+@mcp.tool()
+def options_destroy_session(session_id: str) -> dict[str, Any]:
+    """Close an OptionsService session, discarding uncommitted changes.
+
+    Args:
+        session_id: Value returned by options_create_session.
+    """
+    data = _options_check(
+        _call_options("DestroySession", {"sessionId": _options_id(session_id)}),
+        "DestroySession",
+    )
+    return _response_envelope(ok=True, tool="options_destroy_session", data=data)
+
+
+@mcp.tool()
+def options_get_category_tree(session_id: str) -> dict[str, Any]:
+    """Get the option category/page tree for a session, as the IDE dialog shows it.
+
+    Args:
+        session_id: Value returned by options_create_session.
+
+    Returns:
+        Envelope whose data contains tree_id and tree_xml. The XML is a
+        <pages> document of <category>/<page> elements; a page id (e.g.
+        'General-GEN-TARGET') is what options_get_option_tree takes.
+    """
+    data = _options_check(
+        _call_options("GetCategoryTree", {"sessionId": _options_id(session_id)}),
+        "GetCategoryTree",
+    )
+    tree = data.get("tree") if isinstance(data, dict) else None
+    tree = tree if isinstance(tree, dict) else {}
+    tree_id = tree.get("id") if isinstance(tree.get("id"), dict) else {}
+    return _response_envelope(
+        ok=True,
+        tool="options_get_category_tree",
+        data={
+            "session_id": session_id,
+            "tree_id": tree_id.get("value"),
+            "tree_xml": tree.get("data"),
+        },
+    )
+
+
+@mcp.tool()
+def options_get_option_tree(session_id: str, tree_id: str) -> dict[str, Any]:
+    """Get the options of one category page, as an XML GUI tree.
+
+    Args:
+        session_id: Value returned by options_create_session.
+        tree_id: Page/category id taken from options_get_category_tree's XML.
+
+    Returns:
+        Envelope whose data contains tree_id and tree_xml, describing the
+        option widgets and their current values. Option ids in that XML are
+        what options_update_state takes.
+    """
+    data = _options_check(
+        _call_options(
+            "GetOptionTree",
+            {"sessionId": _options_id(session_id), "treeId": _options_id(tree_id)},
+        ),
+        "GetOptionTree",
+    )
+    tree = data.get("tree") if isinstance(data, dict) else None
+    tree = tree if isinstance(tree, dict) else {}
+    returned_id = tree.get("id") if isinstance(tree.get("id"), dict) else {}
+    return _response_envelope(
+        ok=True,
+        tool="options_get_option_tree",
+        data={
+            "session_id": session_id,
+            "tree_id": returned_id.get("value") or tree_id,
+            "tree_xml": tree.get("data"),
+        },
+    )
+
+
+@mcp.tool()
+def options_update_state(
+    session_id: str,
+    tree_id: str,
+    updated_json: str = "[]",
+    created_json: str = "[]",
+    deleted_json: str = "[]",
+) -> dict[str, Any]:
+    """Apply option values to a session and verify them (does not save the project).
+
+    Values are validated by the backend, which may reject or adjust them; the
+    returned tree and verification_errors reflect the outcome. Call
+    options_commit to persist an accepted state.
+
+    Args:
+        session_id: Value returned by options_create_session.
+        tree_id: Page/category id the values belong to.
+        updated_json: JSON list of OptionValue objects to change, each
+            `{"optionDefinitionId": "...", "data": "...", "inherited": false,
+            "children": []}`. Only optionDefinitionId and data are usually needed.
+        created_json: JSON list of OptionValue objects to add (e.g. build actions).
+        deleted_json: JSON list of OptionValue objects to remove.
+
+    Returns:
+        Envelope whose data contains tree_xml and verification_errors. `ok` is
+        false when the backend reported verification errors.
+    """
+
+    def _parse(raw: str, label: str) -> list[Any]:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ThriftBridgeError(f"Invalid JSON in {label}: {exc}") from exc
+        if parsed is None:
+            return []
+        if not isinstance(parsed, list):
+            raise ThriftBridgeError(f"{label} must be a JSON list of OptionValue objects")
+        return parsed
+
+    request = {
+        "sessionId": _options_id(session_id),
+        "treeId": _options_id(tree_id),
+        "createdOptionValues": _parse(created_json, "created_json"),
+        "updatedOptionValues": _parse(updated_json, "updated_json"),
+        "deletedOptionValues": _parse(deleted_json, "deleted_json"),
+    }
+    data = _options_check(_call_options("UpdateOptionsState", request), "UpdateOptionsState")
+
+    tree = data.get("tree") if isinstance(data, dict) else None
+    tree = tree if isinstance(tree, dict) else {}
+    errors = data.get("verificationErrors") if isinstance(data, dict) else None
+    errors = errors or []
+    return _response_envelope(
+        ok=not errors,
+        tool="options_update_state",
+        data={
+            "session_id": session_id,
+            "tree_id": tree_id,
+            "tree_xml": tree.get("data"),
+            "verification_errors": errors,
+        },
+        error=None
+        if not errors
+        else _error_entry(
+            code="OPTION_VERIFICATION_FAILED",
+            category="validation",
+            message=f"{len(errors)} option value(s) failed verification.",
+            retryable=False,
+            details={"verification_errors": errors},
+        ),
+    )
+
+
+@mcp.tool()
+def options_commit(session_id: str) -> dict[str, Any]:
+    """Commit a session's verified option state into the project configuration.
+
+    This marks the project modified in the project manager; persist it to disk
+    with `projectmanager_call("SaveEwpFile", ...)`.
+
+    Args:
+        session_id: Value returned by options_create_session.
+    """
+    data = _options_check(
+        _call_options("CommitOptionState", {"sessionId": _options_id(session_id)}),
+        "CommitOptionState",
+    )
+    return _response_envelope(ok=True, tool="options_commit", data=data)
+
+
+@mcp.tool()
+def options_call(method: str, args_json: str = "[]") -> Any:
+    """Call an arbitrary OptionsService RPC method (fallback for unwrapped methods).
+
+    Args:
+        method: RPC method name on OptionsService (e.g. 'GetCategoryTree').
+        args_json: Arguments encoded as JSON. Supported forms:
+            - JSON list for positional arguments
+            - JSON object for keyword arguments
+            - Any other JSON value treated as one positional argument
+
+    Struct arguments:
+        JSON objects are coerced (recursively) into the thrift request struct
+        the method expects, matched by field name - e.g.
+        `{"sessionId": {"value": "0", "type": "OptionsService"}}`.
+
+    Notes:
+        Unlike the wrapped options_* tools this does not inspect the response's
+        `success` field, so check it yourself.
+    """
+    try:
+        parsed = json.loads(args_json)
+    except json.JSONDecodeError as exc:
+        raise ThriftBridgeError(f"Invalid JSON in args_json: {exc}") from exc
+
+    if isinstance(parsed, list):
+        result = _call_options(method, *parsed)
+    elif isinstance(parsed, dict):
+        result = _call_options(method, **parsed)
+    else:
+        result = _call_options(method, parsed)
 
     return to_plain(result)

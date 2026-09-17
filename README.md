@@ -90,6 +90,9 @@ needed when your thrift IDLs live outside this repo; see
 - Runtime loading of the bundled `cspy.thrift` IDL via `thriftpy2`
 - Registry-aware service resolution (debugger, breakpoints, contextmanager,
   memory, disassembly, sourcelookup, symbols, listwindow, libsupport)
+- Launcher backend mode: also hosts the IDE platform services (ProjectManager,
+  OptionsService) via `IarServiceLauncher`, sharing one service registry with
+  `CSpyServer2` - see [docs/ide-services.md](docs/ide-services.md)
 - Tools for session lifecycle, run control, breakpoints/watchpoints, stack and
   locals inspection, memory read/write, disassembly, source lookup, symbol
   lookup, terminal I/O capture, error taxonomy, and arbitrary debugger RPC calls
@@ -125,7 +128,7 @@ If you connect to an externally started `CSpyServer2.exe -standalone`:
 
 ## Backend Modes
 
-This server supports managed and external backend operation.
+This server supports managed, external and launcher backend operation.
 
 1. `managed` (default):
 - MCP server starts `CSpyServer2.exe` itself using:
@@ -142,6 +145,26 @@ This server supports managed and external backend operation.
   - `--registry-host`
   - `--registry-port`
   - optional `--registry-service` (default: `debugger`)
+
+3. `launcher`:
+- MCP server starts `IarServiceLauncher -standalone -sockets`, which owns the
+  service registry and hosts the IDE platform services (ProjectManager,
+  OptionsService). A `CSpyServer2` given via `--cspyserver2` then joins that
+  same registry with `-sockets -registry <port>`, so debugger and IDE services
+  resolve through one registry.
+- Selected by `--service-launcher <path>` or `THRIFT_SERVICE_LAUNCHER_EXE`.
+- Required for the `project_*` and `options_*` tools: a standalone
+  `CSpyServer2` has no service manager and cannot host those services.
+- `--cspyserver2` is optional here; omit it for a project/options-only setup.
+
+```sh
+python -m mcp_thrift_server \
+  --service-launcher /abs/path/common/bin/IarServiceLauncher \
+  --cspyserver2      /abs/path/common/bin/CSpyServer2
+```
+
+See [docs/ide-services.md](docs/ide-services.md) for the full picture,
+including connecting to a Thrift-enabled `iaride` instead.
 
 ## Run
 
@@ -318,15 +341,28 @@ Live test lifecycle expectation:
 - `project_get_launch_config(project_path="", config_name="")`
 - `project_configure_and_start_debug(project_path="", config_name="", build_first=True, start_session=True)`
 - `projectmanager_call(method, args_json="[]")`
+- `ide_services_status()`
+- `ide_services_ensure(services="", force=False)`
+- `ide_services_stop_launcher()`
+- `options_create_session(project_path="", config_name="", node_path_or_index="", show_hidden_options=False)`
+- `options_destroy_session(session_id)`
+- `options_get_category_tree(session_id)`
+- `options_get_option_tree(session_id, tree_id)`
+- `options_update_state(session_id, tree_id, updated_json="[]", created_json="[]", deleted_json="[]")`
+- `options_commit(session_id)`
+- `options_call(method, args_json="[]")`
 
 ### ProjectManager tools (build/debug/edit loop)
 
 The `project_*` tools talk to the `ProjectManager` thrift service
 (`projectmanager.thrift`, registry name
 `com.iar.thrift.service.projectmanager`, override with
-`THRIFT_PROJECTMANAGER_SERVICE_NAME`). That service is hosted by the IDE
-backend (`iaride`, e.g. started via `run_iaride.sh`) — it is **not**
-available from a standalone `CSpyServer2`.
+`THRIFT_PROJECTMANAGER_SERVICE_NAME`). That service is **not** available from
+a standalone `CSpyServer2`, which has no service manager and cannot load it.
+Run the bridge in [launcher mode](docs/ide-services.md) so it hosts the service
+itself via `IarServiceLauncher`, or point it at a backend that already does
+(a hand-started launcher, or a Thrift-enabled `iaride`). `ide_services_status()`
+reports what the current backend provides.
 
 Canonical edit → build → debug loop:
 1. `project_load_workspace("/abs/path/workspace.eww")` (or a bare `.ewp`)
@@ -460,6 +496,45 @@ AI usage notes:
 - Listwindow/trace note: in standalone/headless sessions, instruction trace
   listwindow services may not be published in ServiceRegistry. Use
   `listwindow_list_services("")` to confirm availability before attempting row reads.
+
+### OptionsService tools (build/debug option GUI model)
+
+The `options_*` tools talk to the `OptionsService` thrift service
+(`OptionsService.thrift`, registry name `com.iar.optionsservice`, override with
+`THRIFT_OPTIONSSERVICE_SERVICE_NAME`). Like ProjectManager it is hosted by
+`IarServiceLauncher`/`iaride`, not by `CSpyServer2` - see
+[docs/ide-services.md](docs/ide-services.md).
+
+`OptionsService` is the presentation view of a configuration's options: the
+same category/option tree the IDE's options dialog renders, served as XML, plus
+backend validation of proposed values. It is session based:
+
+1. `options_create_session("/abs/path/p.ewp", "Debug")` -> `session_id`
+2. `options_get_category_tree(session_id)` -> `<pages>` XML; take a page id
+   such as `General-GEN-TARGET` from it
+3. `options_get_option_tree(session_id, "General-GEN-TARGET")` -> the option
+   widgets and their current values
+4. `options_update_state(session_id, tree_id, updated_json)` -> validated tree
+   plus `verification_errors`; the envelope's `ok` is false when any value was
+   rejected
+5. `options_commit(session_id)` -> writes the state into the configuration and
+   marks the project modified; persist with
+   `projectmanager_call("SaveEwpFile", ...)`
+6. `options_destroy_session(session_id)`
+
+For plain option reading/writing prefer ProjectManager's
+`GetOptionsForConfiguration` / `ApplyOptionsForConfiguration` via
+`projectmanager_call` - a flat list of option ids and values, no session or XML.
+Use `options_*` when you want the GUI's grouping and presentation, or the
+backend's verdict on a value.
+
+Note that *reading* options can mutate the configuration (some target options
+persist derived values as a side effect of being read), so treat a session as a
+transaction: do the reads and writes you need, then commit or destroy it.
+
+`ide_services_status()` reports how the IDE services are currently hosted and
+is the first thing to call when an `options_*` or `project_*` tool cannot reach
+its service.
 
 ## AI Playbooks
 

@@ -133,11 +133,18 @@ def test_thrift_connection_info(server_module, monkeypatch):
         cspy_args="-standalone -sockets",
         cspy_start_timeout_ms=20000,
         cspy_restart_on_failure=True,
+        launcher_executable=None,
+        launcher_start_timeout_ms=40000,
+        launcher_restart_on_failure=True,
+        service_bin_dir=None,
+        ide_services=[],
+        auto_ide_services=True,
     )
     monkeypatch.setattr(server_module, "load_config", lambda: cfg)
     info = server_module.thrift_connection_info()
     assert info["registry_port"] == 49820
     assert info["cspy_mode"] == "external"
+    assert info["ide_services"] == ["options", "projectmanager"]
 
 
 def test_debugger_wrappers(server_module, monkeypatch):
