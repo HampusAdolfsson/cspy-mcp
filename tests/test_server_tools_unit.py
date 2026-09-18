@@ -128,16 +128,25 @@ def test_thrift_connection_info(server_module, monkeypatch):
         registry_host="127.0.0.1",
         registry_port=49820,
         registry_service_name="debugger",
-        cspy_mode="external",
+        cspy_mode="standalone",
+        iar_path=None,
         cspy_executable=None,
         cspy_args="-standalone -sockets",
         cspy_start_timeout_ms=20000,
         cspy_restart_on_failure=True,
+        launcher_executable=None,
+        launcher_start_timeout_ms=40000,
+        launcher_restart_on_failure=True,
+        service_bin_dir=None,
+        ide_services=[],
+        auto_ide_services=True,
+        host_ide_services=True,
     )
     monkeypatch.setattr(server_module, "load_config", lambda: cfg)
     info = server_module.thrift_connection_info()
     assert info["registry_port"] == 49820
-    assert info["cspy_mode"] == "external"
+    assert info["cspy_mode"] == "standalone"
+    assert info["ide_services"] == ["options", "projectmanager"]
 
 
 def test_debugger_wrappers(server_module, monkeypatch):
@@ -146,7 +155,13 @@ def test_debugger_wrappers(server_module, monkeypatch):
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
 
     def fake_call(method, *args, **kwargs):
@@ -202,7 +217,13 @@ def test_debugger_session_status_when_not_started(server_module, monkeypatch):
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_call_debugger", lambda method, *args, **kwargs: True)
     server_module._set_session_state(configured=False, started=False)
@@ -220,7 +241,13 @@ def test_debugger_session_status_includes_managed_metadata(server_module, monkey
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="managed", registry_host="127.0.0.1", registry_port=60000),
+        lambda: SimpleNamespace(
+            cspy_mode="managed",
+            registry_host="127.0.0.1",
+            registry_port=60000,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "managed_server_status", lambda: {"running": True, "pid": 123})
 
@@ -266,11 +293,17 @@ def test_debugger_eval_expression_wrapper(server_module, monkeypatch):
         server_module.debugger_eval_expression("  ")
 
 
-def test_debugger_capabilities_external_not_started(server_module, monkeypatch):
+def test_debugger_capabilities_standalone_not_started(server_module, monkeypatch):
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "debugger_list_methods", lambda: ["isOnline", "go"])
     monkeypatch.setattr(server_module, "_call_debugger", lambda method, *args, **kwargs: True)
@@ -279,7 +312,7 @@ def test_debugger_capabilities_external_not_started(server_module, monkeypatch):
     out = server_module.debugger_capabilities()
     assert out["ok"] is True
     assert out["tool"] == "debugger_capabilities"
-    assert out["data"]["backend_mode"] == "external"
+    assert out["data"]["backend_mode"] == "standalone"
     assert out["data"]["session"] == {"configured": False, "started": False}
     assert out["data"]["backend_online"] is True
     assert out["data"]["core_count"] is None
@@ -291,7 +324,13 @@ def test_debugger_capabilities_managed_started(server_module, monkeypatch):
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="managed", registry_host="127.0.0.1", registry_port=60000),
+        lambda: SimpleNamespace(
+            cspy_mode="managed",
+            registry_host="127.0.0.1",
+            registry_port=60000,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "managed_server_status", lambda: {"running": True})
     monkeypatch.setattr(server_module, "debugger_list_methods", lambda: ["isOnline", "getNumberOfCores"])
@@ -320,7 +359,13 @@ def test_debugger_capabilities_collects_structured_errors(server_module, monkeyp
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "managed_server_crash_diagnostics", lambda: "managed diagnostics tail")
 
@@ -446,7 +491,13 @@ def test_debugger_configure_and_start_wrapper(server_module, monkeypatch):
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -483,7 +534,13 @@ def test_debugger_configure_and_start_wrapper_runs_to_stop_on_symbol(server_modu
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -522,7 +579,13 @@ def test_debugger_configure_and_start_wrapper_without_stop_on_symbol_skips_run_t
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -548,7 +611,13 @@ def test_debugger_configure_and_start_wrapper_reports_stop_on_symbol_error(serve
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -579,7 +648,13 @@ def test_debugger_configure_and_start_wrapper_uses_cleanup_when_stop_fails(serve
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -613,7 +688,13 @@ def test_debugger_configure_and_start_wrapper_handles_stale_backend_online(serve
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -657,7 +738,13 @@ def test_debugger_configure_and_start_wrapper_managed_forces_fresh_cleanup(serve
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="managed", registry_host="127.0.0.1", registry_port=60000),
+        lambda: SimpleNamespace(
+            cspy_mode="managed",
+            registry_host="127.0.0.1",
+            registry_port=60000,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(server_module, "_ensure_debug_eventhandler", lambda: {"ok": True})
     monkeypatch.setattr(server_module, "_ensure_libsupport", lambda: {"ok": True})
@@ -803,7 +890,13 @@ def test_debugger_stop_failure_still_resets_local_state(server_module, monkeypat
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
     monkeypatch.setattr(
         server_module,
@@ -824,7 +917,13 @@ def test_debugger_stop_session_idempotent_when_already_stopped(server_module, mo
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
 
     def fake_call(method, *args, **kwargs):
@@ -849,7 +948,13 @@ def test_debugger_stop_session_managed_stops_backend_even_when_locally_stopped(s
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="managed", registry_host="127.0.0.1", registry_port=60000),
+        lambda: SimpleNamespace(
+            cspy_mode="managed",
+            registry_host="127.0.0.1",
+            registry_port=60000,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
 
     calls = []
@@ -872,7 +977,13 @@ def test_debugger_stop_session_managed_stops_then_shutdowns(server_module, monke
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="managed", registry_host="127.0.0.1", registry_port=60000),
+        lambda: SimpleNamespace(
+            cspy_mode="managed",
+            registry_host="127.0.0.1",
+            registry_port=60000,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
 
     calls = []
@@ -898,7 +1009,13 @@ def test_debugger_stop_session_treats_dkstop_code6_as_idempotent(server_module, 
     monkeypatch.setattr(
         server_module,
         "load_config",
-        lambda: SimpleNamespace(cspy_mode="external", registry_host="127.0.0.1", registry_port=49820),
+        lambda: SimpleNamespace(
+            cspy_mode="standalone",
+            registry_host="127.0.0.1",
+            registry_port=49820,
+            iar_path=None,
+            launcher_executable=None,
+        ),
     )
 
     class FakeCSpyException(Exception):

@@ -17,10 +17,18 @@ class ThriftConfig:
     registry_port: int | None
     registry_service_name: str
     cspy_mode: str
+    iar_path: Path | None
     cspy_executable: Path | None
     cspy_args: list[str]
     cspy_start_timeout_ms: int
     cspy_restart_on_failure: bool
+    launcher_executable: Path | None
+    launcher_start_timeout_ms: int
+    launcher_restart_on_failure: bool
+    service_bin_dir: Path | None
+    ide_services: list[str]
+    auto_ide_services: bool
+    host_ide_services: bool
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -54,6 +62,52 @@ def _split_args(raw: str | None) -> list[str]:
     return [p for p in shlex.split(raw, posix=False) if p]
 
 
+#: ``external`` is the name this setting used before the modes were reduced to
+#: two; ``launcher`` named what is now just part of managed mode.
+_MODE_ALIASES = {"external": "standalone", "launcher": "managed"}
+
+
+def _normalize_mode(raw: str | None) -> str:
+    """Resolve THRIFT_CSPYSERVER_MODE to ``managed`` or ``standalone``.
+
+    managed:    the bridge starts and supervises the backend itself.
+    standalone: the backend is already running; connect to its registry.
+    """
+    mode = (raw or "managed").strip().lower()
+    mode = _MODE_ALIASES.get(mode, mode)
+    return mode if mode in {"managed", "standalone"} else "managed"
+
+
+def _iar_bin_dir(stage: Path | None) -> Path | None:
+    """Executables and service libraries live in <stage>/common/bin.
+
+    That layout is stable across IAR products and build stages, so it is
+    derived rather than configured per program.
+    """
+    return stage / "common" / "bin" if stage is not None else None
+
+
+def _iar_executable(bin_dir: Path | None, name: str) -> Path | None:
+    """Locate a program in the stage, or None when the stage does not ship it.
+
+    Existence is checked here, and only for stage-derived paths: a
+    compiler-only toolchain has no IarServiceLauncher, and the bridge should
+    quietly do without rather than fail. A path given explicitly is returned
+    unchecked so that a typo surfaces as an error later on.
+    """
+    if bin_dir is None:
+        return None
+    candidate = bin_dir / (f"{name}.exe" if os.name == "nt" else name)
+    return candidate if candidate.exists() else None
+
+
+def _split_services(raw: str | None) -> list[str]:
+    """Parse THRIFT_IDE_SERVICES; empty means every known IDE service."""
+    if raw is None or not raw.strip():
+        return []
+    return [part.strip().lower() for part in raw.replace(";", ",").split(",") if part.strip()]
+
+
 def load_config() -> ThriftConfig:
     host = os.getenv("THRIFT_HOST", "127.0.0.1")
     port = int(os.getenv("THRIFT_PORT", "9090"))
@@ -77,15 +131,50 @@ def load_config() -> ThriftConfig:
     registry_port = int(registry_port_raw) if registry_port_raw else None
     registry_service_name = os.getenv("THRIFT_REGISTRY_SERVICE", "debugger")
 
-    cspy_mode = os.getenv("THRIFT_CSPYSERVER_MODE", "managed").strip().lower()
-    if cspy_mode not in {"external", "managed"}:
-        cspy_mode = "managed"
+    cspy_mode = _normalize_mode(os.getenv("THRIFT_CSPYSERVER_MODE"))
+
+    # One path for the whole toolchain; the individual program paths below stay
+    # supported and win over it when set.
+    iar_path_raw = os.getenv("IAR_INSTALL_PATH")
+    iar_path = Path(iar_path_raw).expanduser().resolve() if iar_path_raw else None
+    bin_dir = _iar_bin_dir(iar_path)
 
     cspy_executable_raw = os.getenv("THRIFT_CSPYSERVER_EXE")
-    cspy_executable = Path(cspy_executable_raw).expanduser().resolve() if cspy_executable_raw else None
+    cspy_executable = (
+        Path(cspy_executable_raw).expanduser().resolve()
+        if cspy_executable_raw
+        else _iar_executable(bin_dir, "CSpyServer2")
+    )
     cspy_args = _split_args(os.getenv("THRIFT_CSPYSERVER_ARGS"))
     cspy_start_timeout_ms = int(os.getenv("THRIFT_CSPYSERVER_START_TIMEOUT_MS", "20000"))
     cspy_restart_on_failure = _env_bool("THRIFT_CSPYSERVER_RESTART_ON_FAILURE", True)
+
+    launcher_executable_raw = os.getenv("THRIFT_SERVICE_LAUNCHER_EXE")
+    launcher_executable = (
+        Path(launcher_executable_raw).expanduser().resolve()
+        if launcher_executable_raw
+        else _iar_executable(bin_dir, "IarServiceLauncher")
+    )
+    # IarServiceLauncher has to dlopen/LoadLibrary the service implementation
+    # (and, for ProjectManager, the whole legacy project manager behind it), so
+    # it is noticeably slower to become ready than CSpyServer2.
+    launcher_start_timeout_ms = int(
+        os.getenv("THRIFT_SERVICE_LAUNCHER_START_TIMEOUT_MS", "40000")
+    )
+    launcher_restart_on_failure = _env_bool(
+        "THRIFT_SERVICE_LAUNCHER_RESTART_ON_FAILURE", True
+    )
+
+    service_bin_dir_raw = os.getenv("THRIFT_SERVICE_BIN_DIR")
+    service_bin_dir = (
+        Path(service_bin_dir_raw).expanduser().resolve() if service_bin_dir_raw else bin_dir
+    )
+    ide_services = _split_services(os.getenv("THRIFT_IDE_SERVICES"))
+    auto_ide_services = _env_bool("THRIFT_AUTO_IDE_SERVICES", True)
+    host_ide_services = _env_bool("THRIFT_HOST_IDE_SERVICES", True)
+    if not host_ide_services:
+        # Debugger only: do not start an IarServiceLauncher at all.
+        launcher_executable = None
 
     return ThriftConfig(
         host=host,
@@ -97,8 +186,16 @@ def load_config() -> ThriftConfig:
         registry_port=registry_port,
         registry_service_name=registry_service_name,
         cspy_mode=cspy_mode,
+        iar_path=iar_path,
         cspy_executable=cspy_executable,
         cspy_args=cspy_args,
         cspy_start_timeout_ms=cspy_start_timeout_ms,
         cspy_restart_on_failure=cspy_restart_on_failure,
+        launcher_executable=launcher_executable,
+        launcher_start_timeout_ms=launcher_start_timeout_ms,
+        launcher_restart_on_failure=launcher_restart_on_failure,
+        service_bin_dir=service_bin_dir,
+        ide_services=ide_services,
+        auto_ide_services=auto_ide_services,
+        host_ide_services=host_ide_services,
     )

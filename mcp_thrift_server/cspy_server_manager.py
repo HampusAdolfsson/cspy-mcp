@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .config import ThriftConfig
+from .service_launcher import ensure_launcher_registry
 
 _PORT_PATTERN = re.compile(r"Service registry running on local socket on port:\s*(\d+)")
 
@@ -113,7 +114,23 @@ def _cleanup_process_locked() -> None:
 
 def _require_managed_mode(cfg: ThriftConfig) -> None:
     if cfg.cspy_mode != "managed":
-        raise RuntimeError("Managed CSpyServer is only available in THRIFT_CSPYSERVER_MODE=managed")
+        raise RuntimeError(
+            "Starting a backend is only done in THRIFT_CSPYSERVER_MODE=managed; "
+            f"the current mode is {cfg.cspy_mode!r}"
+        )
+
+
+def _cspy_args(cfg: ThriftConfig, join_registry_port: int | None) -> list[str]:
+    """Arguments for the CSpyServer2 process.
+
+    When an IarServiceLauncher is hosting the IDE services, CSpyServer2 must
+    not start a registry of its own: it joins the launcher's with
+    `-registry <port>`, so the debugger services and the IDE services end up in
+    a single registry. Without a launcher it starts its own, as before.
+    """
+    if join_registry_port is None:
+        return list(cfg.cspy_args)
+    return ["-sockets", "-registry", str(int(join_registry_port))]
 
 
 def _effective_registry_host(cfg: ThriftConfig) -> str:
@@ -124,7 +141,9 @@ def _resolve_executable(cfg: ThriftConfig) -> Path:
     exe = cfg.cspy_executable
     if exe is None:
         raise RuntimeError(
-            "THRIFT_CSPYSERVER_EXE is required when THRIFT_CSPYSERVER_MODE=managed"
+            "No CSpyServer2 path. Pass --iar-path <path> (or set IAR_INSTALL_PATH) and it "
+            "is taken from <path>/common/bin, or point THRIFT_CSPYSERVER_EXE at it "
+            "directly."
         )
     if not exe.exists():
         raise RuntimeError(f"CSpyServer2 executable not found: {exe}")
@@ -151,9 +170,9 @@ def _refresh_stdout_tail_locked() -> None:
         _STATE.registry_port_event.set()
 
 
-def _start_process_locked(cfg: ThriftConfig) -> None:
+def _start_process_locked(cfg: ThriftConfig, join_registry_port: int | None = None) -> None:
     exe = _resolve_executable(cfg)
-    cmd = [str(exe), *cfg.cspy_args]
+    cmd = [str(exe), *_cspy_args(cfg, join_registry_port)]
 
     tmp = tempfile.NamedTemporaryFile(prefix="cspyserver2-", suffix=".log", delete=False)
     tmp_path = Path(tmp.name)
@@ -229,6 +248,20 @@ def _is_running_and_healthy_locked(cfg: ThriftConfig) -> bool:
 def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
     _require_managed_mode(cfg)
 
+    join_port: int | None = None
+    if cfg.launcher_executable is not None:
+        # An IarServiceLauncher is available, so it hosts the IDE services and
+        # owns the registry: it comes up first and its endpoint is what
+        # everything resolves through, whether or not a CSpyServer2 joins it.
+        host, join_port = ensure_launcher_registry(cfg)
+        os.environ["THRIFT_REGISTRY_PORT"] = str(join_port)
+        os.environ.setdefault("THRIFT_REGISTRY_HOST", host)
+        if cfg.cspy_executable is None:
+            # No debugger at that path, or one was declined: project/options
+            # tools work and debugger tools fail to resolve `debugger` with a
+            # clear registry error.
+            return host, int(join_port)
+
     with _STATE.lock:
         if _is_running_and_healthy_locked(cfg):
             return _effective_registry_host(cfg), int(_STATE.registry_port)
@@ -242,8 +275,14 @@ def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
         attempts = 2 if cfg.cspy_restart_on_failure else 1
         for _ in range(attempts):
             try:
-                _start_process_locked(cfg)
+                _start_process_locked(cfg, join_port)
                 port = _wait_for_registry_port_locked(cfg)
+                if join_port is not None and int(port) != int(join_port):
+                    raise RuntimeError(
+                        f"CSpyServer2 was asked to join registry port {join_port} but "
+                        f"reported port {port}; it did not attach to the "
+                        "IarServiceLauncher registry"
+                    )
                 os.environ["THRIFT_REGISTRY_PORT"] = str(port)
                 os.environ.setdefault("THRIFT_REGISTRY_HOST", _effective_registry_host(cfg))
                 return _effective_registry_host(cfg), int(port)

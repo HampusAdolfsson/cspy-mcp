@@ -32,6 +32,7 @@ jobs:
         run: >
           pytest -q tests/test_server_tools_unit.py
           tests/test_coerce_args_unit.py tests/test_projectmanager_tools_unit.py
+          tests/test_ide_services_unit.py
 
   live-sim:
     name: Live simulator tests (cxarm)

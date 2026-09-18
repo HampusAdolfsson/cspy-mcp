@@ -8,8 +8,9 @@ Licensed under the [MIT License](LICENSE).
 
 ## Quick Start: Add To Your MCP Client
 
-All examples use managed mode: the MCP server spawns `CSpyServer2.exe` itself
-and auto-detects the registry port. Adjust the two paths (`CSpyServer2.exe`
+All examples use managed mode: the MCP server starts the backend itself out of
+an IAR installation or build stage - the directory with `common/bin` under it -
+and auto-detects the registry port. Adjust the two paths (the IAR installation
 and this repo) to your machine. Install dependencies first
 (`pip install -r requirements.txt`).
 
@@ -22,7 +23,7 @@ Add to `.mcp.json` in your project root (or `~/.claude.json` for user scope):
   "mcpServers": {
     "cspy-debugger": {
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--cspyserver2", "C:\\iar\\qtarm-10.2.1\\common\\bin\\CSpyServer2.exe"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "env": { "PYTHONPATH": "C:\\path\\to\\this-repo" }
     }
   }
@@ -32,7 +33,7 @@ Add to `.mcp.json` in your project root (or `~/.claude.json` for user scope):
 Or from the terminal:
 
 ```bash
-claude mcp add cspy-debugger --env PYTHONPATH=C:\path\to\this-repo -- python -m mcp_thrift_server --cspyserver2 "C:\iar\qtarm-10.2.1\common\bin\CSpyServer2.exe"
+claude mcp add cspy-debugger --env PYTHONPATH=C:\path\to\this-repo -- python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1"
 ```
 
 ### Claude Desktop
@@ -45,7 +46,7 @@ Add the same `mcpServers` block to `claude_desktop_config.json`
   "mcpServers": {
     "cspy-debugger": {
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--cspyserver2", "C:\\iar\\qtarm-10.2.1\\common\\bin\\CSpyServer2.exe"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "env": { "PYTHONPATH": "C:\\path\\to\\this-repo" }
     }
   }
@@ -63,16 +64,16 @@ Command Palette):
     "cspy-debugger": {
       "type": "stdio",
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--cspyserver2", "C:\\iar\\qtarm-10.2.1\\common\\bin\\CSpyServer2.exe"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "cwd": "C:\\path\\to\\this-repo"
     }
   }
 }
 ```
 
-### Connecting to an already-running backend (external mode)
+### Connecting to an already-running backend (standalone mode)
 
-Replace the `--cspyserver2` argument with registry flags in any config above:
+Replace the `--iar-path` argument with registry flags in any config above:
 
 ```json
 "args": ["-m", "mcp_thrift_server", "--registry-host", "127.0.0.1", "--registry-port", "51926"]
@@ -85,11 +86,15 @@ needed when your thrift IDLs live outside this repo; see
 ## What it provides
 
 - MCP server over `stdio` (default) or `streamable-http`
-- Managed backend mode: spawns and supervises `CSpyServer2.exe`, auto-detects
-  the registry port, and restarts the backend on failure
+- Managed backend mode: given one path to an IAR installation, spawns and
+  supervises the backend it needs, auto-detects the registry port, and restarts
+  it on failure
 - Runtime loading of the bundled `cspy.thrift` IDL via `thriftpy2`
 - Registry-aware service resolution (debugger, breakpoints, contextmanager,
   memory, disassembly, sourcelookup, symbols, listwindow, libsupport)
+- Hosts the IDE platform services (ProjectManager, OptionsService) via
+  `IarServiceLauncher`, sharing one service registry with `CSpyServer2` - see
+  [docs/ide-services.md](docs/ide-services.md)
 - Tools for session lifecycle, run control, breakpoints/watchpoints, stack and
   locals inspection, memory read/write, disassembly, source lookup, symbol
   lookup, terminal I/O capture, error taxonomy, and arbitrary debugger RPC calls
@@ -99,8 +104,9 @@ needed when your thrift IDLs live outside this repo; see
 ## Prerequisites
 
 - Python 3.10+
-- An IAR toolchain installation providing `CSpyServer2.exe` (managed mode),
-  or an already-running CSpyServer2/Service Registry to connect to (external mode)
+- An IAR toolchain installation or build stage, i.e. a directory with
+  `common/bin` under it (managed mode), or an already-running
+  CSpyServer2/Service Registry to connect to (standalone mode)
 - Thrift IDLs are bundled in this repo (`thrift/cspy.thrift` plus includes);
   nothing extra is needed unless your IDLs live elsewhere
 
@@ -125,39 +131,60 @@ If you connect to an externally started `CSpyServer2.exe -standalone`:
 
 ## Backend Modes
 
-This server supports managed and external backend operation.
+Two modes, selected by `THRIFT_CSPYSERVER_MODE`.
 
 1. `managed` (default):
-- MCP server starts `CSpyServer2.exe` itself using:
-  - executable: provided via CLI (`--cspyserver2`)
-  - args: `THRIFT_CSPYSERVER_ARGS` (default `-standalone -sockets`)
-- It parses CSpyServer2 stdout for:
-  - `Service registry running on local socket on port: <port>`
-- The detected registry port is used automatically for service resolution.
-- If the managed process is unhealthy, the server attempts restart when
-  `THRIFT_CSPYSERVER_RESTART_ON_FAILURE=1`.
+- The bridge starts and supervises the backend itself, out of the IAR
+  installation given by `--iar-path` (or `IAR_INSTALL_PATH`) - the directory with
+  `common/bin` under it:
+  - `IarServiceLauncher`, which owns the service registry and hosts the IDE
+    platform services (ProjectManager, OptionsService)
+  - `CSpyServer2`, started with `-registry <port>` so it joins that same
+    registry rather than creating a second one
+- Every service therefore resolves through one registry, and the `project_*`
+  and `options_*` tools work alongside the `debugger_*` ones.
+- Programs that installation does not ship are simply not started: a
+  compiler-only toolchain has no `IarServiceLauncher`, so `CSpyServer2` runs on
+  its own.
+  `--no-ide-services` chooses that deliberately.
+- It parses the backend's stdout for
+  `Service registry running on local socket on port: <port>`, and restarts an
+  unhealthy process when `THRIFT_CSPYSERVER_RESTART_ON_FAILURE=1`.
 
-2. `external`:
-- Connect to an existing CSpyServer2/registry using CLI flags:
+```sh
+python -m mcp_thrift_server --iar-path /opt/iar/ewarm
+```
+
+2. `standalone`:
+- Connect to a backend someone else is running - a Thrift-enabled `iaride`, or
+  a hand-started `IarServiceLauncher`/`CSpyServer2` - using:
   - `--registry-host`
   - `--registry-port`
   - optional `--registry-service` (default: `debugger`)
 
+`--cspyserver2` and `--service-launcher` still take individual program paths,
+overriding what `--iar-path` provides; they are rarely needed.
+(`THRIFT_CSPYSERVER_MODE=external` is accepted as the old name for
+`standalone`.)
+
+See [docs/ide-services.md](docs/ide-services.md) for what the IDE services need
+and how to check them.
+
 ## Run
 
-Managed mode (spawns CSpyServer2, auto-detects registry port):
+Managed mode (starts the backend from the stage, auto-detects registry port):
 
 ```powershell
-python -m mcp_thrift_server --cspyserver2 "C:\iar\qtarm-10.2.1\common\bin\CSpyServer2.exe"
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1"
 ```
 
 Optional custom CSpyServer2 args:
 
 ```powershell
-python -m mcp_thrift_server --cspyserver2 "C:\iar\qtarm-10.2.1\common\bin\CSpyServer2.exe" --cspyserver2-args "-standalone -sockets"
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1" --cspyserver2-args "-standalone -sockets"
 ```
 
-External mode (connect to an already-running backend registry):
+Standalone mode (connect to an already-running backend registry):
 
 ```powershell
 python -m mcp_thrift_server --registry-host 127.0.0.1 --registry-port 51926
@@ -187,8 +214,48 @@ Terminal-only health probe (starts managed CSpyServer2, parses registry port,
 prints status, exits):
 
 ```powershell
-python -m mcp_thrift_server --cspyserver2 "C:\iar\qtarm-10.2.1\common\bin\CSpyServer2.exe" --probe-cspyserver2
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1" --probe-cspyserver2
 ```
+
+### Helper scripts (Linux/macOS)
+
+Three thin wrappers, one per way of running the server. Each takes the IAR path
+as its first argument or from `IAR_INSTALL_PATH`, and uses `.venv/bin/python3` when
+present.
+
+| Script | Transport | Backend |
+| --- | --- | --- |
+| `run_headless.sh <iar-path>` | **stdio** | managed: starts IarServiceLauncher + CSpyServer2 |
+| `run_web.sh <iar-path>` | HTTP on `MCP_PORT` | the same managed backend |
+| `run_iaride.sh <iar-path>` | HTTP on `MCP_PORT` | standalone: starts IarIde and resolves through its registry |
+
+`run_headless.sh` is the one to give an MCP host, since hosts launch the server
+and talk to it over stdio:
+
+```json
+{
+  "mcpServers": {
+    "cspy-debugger": {
+      "command": "/abs/path/to/cspy-mcp/run_headless.sh",
+      "args": ["/opt/iar/ewarm"]
+    }
+  }
+}
+```
+
+The HTTP ones are handy when you want to poke at a long-lived server yourself,
+or keep it running independently of the agent.
+
+```sh
+./run_headless.sh /opt/iar/ewarm
+MCP_PORT=8123 ./run_web.sh /opt/iar/ewarm
+NO_IDE_SERVICES=1 ./run_headless.sh /opt/iar/ewarm          # debugger only
+THRIFT_IDE_SERVICES=projectmanager ./run_headless.sh /opt/iar/ewarm
+```
+
+All tools are available from `run_headless.sh` and `run_web.sh`;
+`run_iaride.sh` gets the same IDE services from the GUI IDE instead. See
+[docs/ide-services.md](docs/ide-services.md).
 
 ## Testing (pytest)
 
@@ -318,15 +385,28 @@ Live test lifecycle expectation:
 - `project_get_launch_config(project_path="", config_name="")`
 - `project_configure_and_start_debug(project_path="", config_name="", build_first=True, start_session=True)`
 - `projectmanager_call(method, args_json="[]")`
+- `ide_services_status()`
+- `ide_services_ensure(services="", force=False)`
+- `ide_services_stop_launcher()`
+- `options_create_session(project_path="", config_name="", node_path_or_index="", show_hidden_options=False)`
+- `options_destroy_session(session_id)`
+- `options_get_category_tree(session_id)`
+- `options_get_option_tree(session_id, tree_id)`
+- `options_update_state(session_id, tree_id, updated_json="[]", created_json="[]", deleted_json="[]")`
+- `options_commit(session_id)`
+- `options_call(method, args_json="[]")`
 
 ### ProjectManager tools (build/debug/edit loop)
 
 The `project_*` tools talk to the `ProjectManager` thrift service
 (`projectmanager.thrift`, registry name
 `com.iar.thrift.service.projectmanager`, override with
-`THRIFT_PROJECTMANAGER_SERVICE_NAME`). That service is hosted by the IDE
-backend (`iaride`, e.g. started via `run_iaride.sh`) — it is **not**
-available from a standalone `CSpyServer2`.
+`THRIFT_PROJECTMANAGER_SERVICE_NAME`). That service is **not** available from
+a standalone `CSpyServer2`, which has no service manager and cannot load it.
+Run the bridge in [launcher mode](docs/ide-services.md) so it hosts the service
+itself via `IarServiceLauncher`, or point it at a backend that already does
+(a hand-started launcher, or a Thrift-enabled `iaride`). `ide_services_status()`
+reports what the current backend provides.
 
 Canonical edit → build → debug loop:
 1. `project_load_workspace("/abs/path/workspace.eww")` (or a bare `.ewp`)
@@ -460,6 +540,45 @@ AI usage notes:
 - Listwindow/trace note: in standalone/headless sessions, instruction trace
   listwindow services may not be published in ServiceRegistry. Use
   `listwindow_list_services("")` to confirm availability before attempting row reads.
+
+### OptionsService tools (build/debug option GUI model)
+
+The `options_*` tools talk to the `OptionsService` thrift service
+(`OptionsService.thrift`, registry name `com.iar.optionsservice`, override with
+`THRIFT_OPTIONSSERVICE_SERVICE_NAME`). Like ProjectManager it is hosted by
+`IarServiceLauncher`/`iaride`, not by `CSpyServer2` - see
+[docs/ide-services.md](docs/ide-services.md).
+
+`OptionsService` is the presentation view of a configuration's options: the
+same category/option tree the IDE's options dialog renders, served as XML, plus
+backend validation of proposed values. It is session based:
+
+1. `options_create_session("/abs/path/p.ewp", "Debug")` -> `session_id`
+2. `options_get_category_tree(session_id)` -> `<pages>` XML; take a page id
+   such as `General-GEN-TARGET` from it
+3. `options_get_option_tree(session_id, "General-GEN-TARGET")` -> the option
+   widgets and their current values
+4. `options_update_state(session_id, tree_id, updated_json)` -> validated tree
+   plus `verification_errors`; the envelope's `ok` is false when any value was
+   rejected
+5. `options_commit(session_id)` -> writes the state into the configuration and
+   marks the project modified; persist with
+   `projectmanager_call("SaveEwpFile", ...)`
+6. `options_destroy_session(session_id)`
+
+For plain option reading/writing prefer ProjectManager's
+`GetOptionsForConfiguration` / `ApplyOptionsForConfiguration` via
+`projectmanager_call` - a flat list of option ids and values, no session or XML.
+Use `options_*` when you want the GUI's grouping and presentation, or the
+backend's verdict on a value.
+
+Note that *reading* options can mutate the configuration (some target options
+persist derived values as a side effect of being read), so treat a session as a
+transaction: do the reads and writes you need, then commit or destroy it.
+
+`ide_services_status()` reports how the IDE services are currently hosted and
+is the first thing to call when an `options_*` or `project_*` tool cannot reach
+its service.
 
 ## AI Playbooks
 

@@ -81,7 +81,7 @@ def main() -> int:
                     ms = managed_server_status()
                     print(f"[repro] managed_server_status={ms}")
                 else:
-                    print("[repro] managed_server_status=<skipped in external mode>")
+                    print("[repro] managed_server_status=<skipped in standalone mode>")
             except Exception as ms_exc:  # noqa: BLE001
                 print(f"[repro] managed_server_status failed: {ms_exc}")
 

@@ -1,9 +1,11 @@
 import argparse
 import os
+import signal
 import sys
 
 from .config import load_config
 from .cspy_server_manager import ensure_managed_server, managed_server_status, shutdown_managed_server
+from .service_launcher import shutdown_service_launcher
 from .server import mcp
 
 
@@ -21,16 +23,57 @@ def _parse_args() -> argparse.Namespace:
         help="Port to use with --web (default from MCP_PORT or 8000).",
     )
     parser.add_argument(
+        "--iar-path",
+        dest="iar_path",
+        default=None,
+        help=(
+            "Path to an IAR installation or build stage, i.e. the directory with "
+            "common/bin under it. The programs the bridge needs are taken from "
+            "there, so this is normally the only path you have to give."
+        ),
+    )
+    parser.add_argument(
         "--cspyserver2",
         dest="cspyserver2",
         default=None,
-        help="Path to CSpyServer2 executable. Enables managed mode when provided.",
+        help=(
+            "Path to the CSpyServer2 executable, overriding --iar-path."
+        ),
     )
     parser.add_argument(
         "--cspyserver2-args",
         dest="cspyserver2_args",
         default=None,
         help="Optional CSpyServer2 args string (default: -standalone -sockets)",
+    )
+    parser.add_argument(
+        "--service-launcher",
+        dest="service_launcher",
+        default=None,
+        help=(
+            "Path to the IarServiceLauncher executable, overriding --iar-path. "
+            "It hosts the IDE services (ProjectManager, OptionsService) and owns "
+            "the service registry that CSpyServer2 then joins."
+        ),
+    )
+    parser.add_argument(
+        "--no-ide-services",
+        dest="no_ide_services",
+        action="store_true",
+        help=(
+            "Do not host the IDE services: run the debugger alone, without an "
+            "IarServiceLauncher. The project_* and options_* tools are then "
+            "unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--ide-services",
+        dest="ide_services",
+        default=None,
+        help=(
+            "Comma-separated IDE services to host: projectmanager, options "
+            "(default: all)."
+        ),
     )
     parser.add_argument(
         "--probe-cspyserver2",
@@ -41,14 +84,14 @@ def _parse_args() -> argparse.Namespace:
         "--registry-host",
         dest="registry_host",
         default=None,
-        help="Connect to an existing backend registry host (external mode).",
+        help="Connect to an existing backend registry host (standalone mode).",
     )
     parser.add_argument(
         "--registry-port",
         dest="registry_port",
         type=int,
         default=None,
-        help="Connect to an existing backend registry port (external mode).",
+        help="Connect to an existing backend registry port (standalone mode).",
     )
     parser.add_argument(
         "--registry-service",
@@ -68,22 +111,33 @@ def main() -> None:
         if args.web_port is not None:
             os.environ["MCP_PORT"] = str(int(args.web_port))
 
-    if args.cspyserver2:
+    if args.iar_path:
+        os.environ["IAR_INSTALL_PATH"] = args.iar_path
+
+    if args.service_launcher:
+        os.environ["THRIFT_SERVICE_LAUNCHER_EXE"] = args.service_launcher
+    if args.no_ide_services:
+        os.environ["THRIFT_HOST_IDE_SERVICES"] = "0"
+    if args.ide_services is not None:
+        os.environ["THRIFT_IDE_SERVICES"] = args.ide_services
+
+    if args.iar_path or args.cspyserver2 or args.service_launcher:
         os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
-        os.environ["THRIFT_CSPYSERVER_EXE"] = args.cspyserver2
-        # Avoid stale external-mode registry env vars pinning managed startup
-        # to an old/conflicting port. Managed mode can still use fixed registry
-        # by passing --cspyserver2-args "... -registry <port>".
+        # Avoid stale standalone-mode registry env vars pinning managed startup
+        # to an old/conflicting port. Managed mode can still use a fixed
+        # registry by passing --cspyserver2-args "... -registry <port>".
         os.environ.pop("THRIFT_REGISTRY_PORT", None)
         os.environ.pop("THRIFT_REGISTRY_HOST", None)
+    if args.cspyserver2:
+        os.environ["THRIFT_CSPYSERVER_EXE"] = args.cspyserver2
     if args.cspyserver2_args:
         os.environ["THRIFT_CSPYSERVER_ARGS"] = args.cspyserver2_args
 
     if args.registry_host is not None:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "external"
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "standalone"
         os.environ["THRIFT_REGISTRY_HOST"] = str(args.registry_host)
     if args.registry_port is not None:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "external"
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "standalone"
         os.environ["THRIFT_REGISTRY_PORT"] = str(int(args.registry_port))
     if args.registry_service is not None:
         os.environ["THRIFT_REGISTRY_SERVICE"] = str(args.registry_service)
@@ -106,7 +160,32 @@ def main() -> None:
             file=sys.stderr,
             flush=True,
         )
-    mcp.run(transport=transport, mount_path=mount_path)
+
+    # uvicorn captures SIGTERM, shuts the server down, restores whatever handler
+    # was installed beforehand and then re-raises the signal. With the default
+    # disposition restored that kills the process outright, so neither the
+    # finally below nor the managers' atexit hooks ever run and CSpyServer2 -
+    # plus IarServiceLauncher in launcher mode - is orphaned. Installing our own
+    # handler first means the one uvicorn restores is this one, so the re-raise
+    # lands here and we get to tear the backends down.
+    def _terminate(signum, _frame):
+        shutdown_managed_server()
+        shutdown_service_launcher()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    try:
+        signal.signal(signal.SIGTERM, _terminate)
+    except (ValueError, OSError):
+        pass  # not the main thread, or unsupported on this platform
+
+    try:
+        mcp.run(transport=transport, mount_path=mount_path)
+    finally:
+        # Covers the exit paths that unwind normally, including Ctrl-C;
+        # _terminate above covers SIGTERM. Both are idempotent.
+        shutdown_managed_server()
+        shutdown_service_launcher()
 
 
 if __name__ == "__main__":
