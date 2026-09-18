@@ -17,7 +17,7 @@ class ThriftConfig:
     registry_port: int | None
     registry_service_name: str
     cspy_mode: str
-    iar_stage: Path | None
+    iar_path: Path | None
     cspy_executable: Path | None
     cspy_args: list[str]
     cspy_start_timeout_ms: int
@@ -78,7 +78,7 @@ def _normalize_mode(raw: str | None) -> str:
     return mode if mode in {"managed", "standalone"} else "managed"
 
 
-def _stage_bin_dir(stage: Path | None) -> Path | None:
+def _iar_bin_dir(stage: Path | None) -> Path | None:
     """Executables and service libraries live in <stage>/common/bin.
 
     That layout is stable across IAR products and build stages, so it is
@@ -87,7 +87,7 @@ def _stage_bin_dir(stage: Path | None) -> Path | None:
     return stage / "common" / "bin" if stage is not None else None
 
 
-def _stage_executable(stage_bin: Path | None, name: str) -> Path | None:
+def _iar_executable(bin_dir: Path | None, name: str) -> Path | None:
     """Locate a program in the stage, or None when the stage does not ship it.
 
     Existence is checked here, and only for stage-derived paths: a
@@ -95,9 +95,9 @@ def _stage_executable(stage_bin: Path | None, name: str) -> Path | None:
     quietly do without rather than fail. A path given explicitly is returned
     unchecked so that a typo surfaces as an error later on.
     """
-    if stage_bin is None:
+    if bin_dir is None:
         return None
-    candidate = stage_bin / (f"{name}.exe" if os.name == "nt" else name)
+    candidate = bin_dir / (f"{name}.exe" if os.name == "nt" else name)
     return candidate if candidate.exists() else None
 
 
@@ -135,15 +135,15 @@ def load_config() -> ThriftConfig:
 
     # One path for the whole toolchain; the individual program paths below stay
     # supported and win over it when set.
-    iar_stage_raw = os.getenv("IAR_STAGE")
-    iar_stage = Path(iar_stage_raw).expanduser().resolve() if iar_stage_raw else None
-    stage_bin = _stage_bin_dir(iar_stage)
+    iar_path_raw = os.getenv("IAR_PATH")
+    iar_path = Path(iar_path_raw).expanduser().resolve() if iar_path_raw else None
+    bin_dir = _iar_bin_dir(iar_path)
 
     cspy_executable_raw = os.getenv("THRIFT_CSPYSERVER_EXE")
     cspy_executable = (
         Path(cspy_executable_raw).expanduser().resolve()
         if cspy_executable_raw
-        else _stage_executable(stage_bin, "CSpyServer2")
+        else _iar_executable(bin_dir, "CSpyServer2")
     )
     cspy_args = _split_args(os.getenv("THRIFT_CSPYSERVER_ARGS"))
     cspy_start_timeout_ms = int(os.getenv("THRIFT_CSPYSERVER_START_TIMEOUT_MS", "20000"))
@@ -153,7 +153,7 @@ def load_config() -> ThriftConfig:
     launcher_executable = (
         Path(launcher_executable_raw).expanduser().resolve()
         if launcher_executable_raw
-        else _stage_executable(stage_bin, "IarServiceLauncher")
+        else _iar_executable(bin_dir, "IarServiceLauncher")
     )
     # IarServiceLauncher has to dlopen/LoadLibrary the service implementation
     # (and, for ProjectManager, the whole legacy project manager behind it), so
@@ -167,7 +167,7 @@ def load_config() -> ThriftConfig:
 
     service_bin_dir_raw = os.getenv("THRIFT_SERVICE_BIN_DIR")
     service_bin_dir = (
-        Path(service_bin_dir_raw).expanduser().resolve() if service_bin_dir_raw else stage_bin
+        Path(service_bin_dir_raw).expanduser().resolve() if service_bin_dir_raw else bin_dir
     )
     ide_services = _split_services(os.getenv("THRIFT_IDE_SERVICES"))
     auto_ide_services = _env_bool("THRIFT_AUTO_IDE_SERVICES", True)
@@ -186,7 +186,7 @@ def load_config() -> ThriftConfig:
         registry_port=registry_port,
         registry_service_name=registry_service_name,
         cspy_mode=cspy_mode,
-        iar_stage=iar_stage,
+        iar_path=iar_path,
         cspy_executable=cspy_executable,
         cspy_args=cspy_args,
         cspy_start_timeout_ms=cspy_start_timeout_ms,

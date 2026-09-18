@@ -129,7 +129,7 @@ def test_thrift_connection_info(server_module, monkeypatch):
         registry_port=49820,
         registry_service_name="debugger",
         cspy_mode="standalone",
-        iar_stage=None,
+        iar_path=None,
         cspy_executable=None,
         cspy_args="-standalone -sockets",
         cspy_start_timeout_ms=20000,
@@ -159,7 +159,7 @@ def test_debugger_wrappers(server_module, monkeypatch):
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -221,7 +221,7 @@ def test_debugger_session_status_when_not_started(server_module, monkeypatch):
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -245,7 +245,7 @@ def test_debugger_session_status_includes_managed_metadata(server_module, monkey
             cspy_mode="managed",
             registry_host="127.0.0.1",
             registry_port=60000,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -301,7 +301,7 @@ def test_debugger_capabilities_standalone_not_started(server_module, monkeypatch
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -328,7 +328,7 @@ def test_debugger_capabilities_managed_started(server_module, monkeypatch):
             cspy_mode="managed",
             registry_host="127.0.0.1",
             registry_port=60000,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -363,7 +363,7 @@ def test_debugger_capabilities_collects_structured_errors(server_module, monkeyp
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -495,7 +495,7 @@ def test_debugger_configure_and_start_wrapper(server_module, monkeypatch):
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -538,7 +538,7 @@ def test_debugger_configure_and_start_wrapper_runs_to_stop_on_symbol(server_modu
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -583,7 +583,7 @@ def test_debugger_configure_and_start_wrapper_without_stop_on_symbol_skips_run_t
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -615,7 +615,7 @@ def test_debugger_configure_and_start_wrapper_reports_stop_on_symbol_error(serve
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -652,7 +652,7 @@ def test_debugger_configure_and_start_wrapper_uses_cleanup_when_stop_fails(serve
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -692,7 +692,7 @@ def test_debugger_configure_and_start_wrapper_handles_stale_backend_online(serve
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -742,7 +742,7 @@ def test_debugger_configure_and_start_wrapper_managed_forces_fresh_cleanup(serve
             cspy_mode="managed",
             registry_host="127.0.0.1",
             registry_port=60000,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -894,7 +894,7 @@ def test_debugger_stop_failure_still_resets_local_state(server_module, monkeypat
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -921,7 +921,7 @@ def test_debugger_stop_session_idempotent_when_already_stopped(server_module, mo
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -952,7 +952,7 @@ def test_debugger_stop_session_managed_stops_backend_even_when_locally_stopped(s
             cspy_mode="managed",
             registry_host="127.0.0.1",
             registry_port=60000,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -981,7 +981,7 @@ def test_debugger_stop_session_managed_stops_then_shutdowns(server_module, monke
             cspy_mode="managed",
             registry_host="127.0.0.1",
             registry_port=60000,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )
@@ -1013,7 +1013,7 @@ def test_debugger_stop_session_treats_dkstop_code6_as_idempotent(server_module, 
             cspy_mode="standalone",
             registry_host="127.0.0.1",
             registry_port=49820,
-            iar_stage=None,
+            iar_path=None,
             launcher_executable=None,
         ),
     )

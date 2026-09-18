@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Run the bridge over HTTP against a Thrift-enabled IarIde (the IAR IDE).
 #
-#   ./run_iaride.sh <iar-stage>
+#   ./run_iaride.sh <iar-path>
 #
-# <iar-stage> is a stage or installation directory, i.e. the one with common/bin
-# under it. iaride is taken from <iar-stage>/common/bin.
+# <iar-path> is an IAR installation or build stage, i.e. the directory with
+# under it. iaride is taken from <iar-path>/common/bin.
 #
 # Env vars:
-#   IAR_STAGE   the stage, if not given as an argument
+#   IAR_PATH    the IAR path, if not given as an argument
 #   IARIDE_EXE  override the iaride path
 #   MCP_PORT    HTTP port to listen on (default 8000)
 #
@@ -26,16 +26,16 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 WEB_PORT="${MCP_PORT:-8000}"
-STAGE="${1:-${IAR_STAGE:-}}"
+IAR_PATH="${1:-${IAR_PATH:-}}"
 REGISTRY_FILE="$SCRIPT_DIR/CSpyServer2-ServiceRegistry.txt"
 
-if [ -z "$STAGE" ] && [ -z "${IARIDE_EXE:-}" ]; then
-  echo "Path to an IAR stage is required." >&2
-  echo "Pass it as the first argument or set IAR_STAGE." >&2
+if [ -z "$IAR_PATH" ] && [ -z "${IARIDE_EXE:-}" ]; then
+  echo "Path to an IAR installation is required." >&2
+  echo "Pass it as the first argument or set IAR_PATH." >&2
   echo "It is the directory with common/bin under it." >&2
   exit 1
 fi
-IARIDE="${IARIDE_EXE:-$STAGE/common/bin/iaride}"
+IARIDE="${IARIDE_EXE:-$IAR_PATH/common/bin/iaride}"
 if [ ! -x "$IARIDE" ]; then
   echo "iaride not found or not executable: $IARIDE" >&2
   exit 1
@@ -81,9 +81,9 @@ print(location["1"]["str"], location["2"]["i32"])
 echo "Found IarIde service registry at $REGISTRY_HOST:$REGISTRY_PORT" >&2
 echo "MCP endpoint: http://127.0.0.1:$WEB_PORT/mcp" >&2
 
-# "external" mode: resolve services via the registry above instead of spawning
-# and managing our own CSpyServer2.
-export THRIFT_CSPYSERVER_MODE=external
+# Standalone mode: resolve services via the registry above instead of spawning
+# and managing our own backend.
+export THRIFT_CSPYSERVER_MODE=standalone
 export THRIFT_REGISTRY_HOST="$REGISTRY_HOST"
 export THRIFT_REGISTRY_PORT="$REGISTRY_PORT"
 

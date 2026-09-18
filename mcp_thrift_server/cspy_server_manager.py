@@ -141,8 +141,8 @@ def _resolve_executable(cfg: ThriftConfig) -> Path:
     exe = cfg.cspy_executable
     if exe is None:
         raise RuntimeError(
-            "No CSpyServer2 path. Pass --iar-stage <stage> (or set IAR_STAGE) and it "
-            "is taken from <stage>/common/bin, or point THRIFT_CSPYSERVER_EXE at it "
+            "No CSpyServer2 path. Pass --iar-path <path> (or set IAR_PATH) and it "
+            "is taken from <path>/common/bin, or point THRIFT_CSPYSERVER_EXE at it "
             "directly."
         )
     if not exe.exists():
@@ -257,7 +257,7 @@ def ensure_managed_server(cfg: ThriftConfig) -> tuple[str, int]:
         os.environ["THRIFT_REGISTRY_PORT"] = str(join_port)
         os.environ.setdefault("THRIFT_REGISTRY_HOST", host)
         if cfg.cspy_executable is None:
-            # No debugger in this stage, or one was declined: project/options
+            # No debugger at that path, or one was declined: project/options
             # tools work and debugger tools fail to resolve `debugger` with a
             # clear registry error.
             return host, int(join_port)

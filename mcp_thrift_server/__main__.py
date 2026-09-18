@@ -23,11 +23,11 @@ def _parse_args() -> argparse.Namespace:
         help="Port to use with --web (default from MCP_PORT or 8000).",
     )
     parser.add_argument(
-        "--iar-stage",
-        dest="iar_stage",
+        "--iar-path",
+        dest="iar_path",
         default=None,
         help=(
-            "Path to an IAR stage or installation, i.e. the directory with "
+            "Path to an IAR installation or build stage, i.e. the directory with "
             "common/bin under it. The programs the bridge needs are taken from "
             "there, so this is normally the only path you have to give."
         ),
@@ -37,7 +37,7 @@ def _parse_args() -> argparse.Namespace:
         dest="cspyserver2",
         default=None,
         help=(
-            "Path to the CSpyServer2 executable, overriding --iar-stage."
+            "Path to the CSpyServer2 executable, overriding --iar-path."
         ),
     )
     parser.add_argument(
@@ -51,7 +51,7 @@ def _parse_args() -> argparse.Namespace:
         dest="service_launcher",
         default=None,
         help=(
-            "Path to the IarServiceLauncher executable, overriding --iar-stage. "
+            "Path to the IarServiceLauncher executable, overriding --iar-path. "
             "It hosts the IDE services (ProjectManager, OptionsService) and owns "
             "the service registry that CSpyServer2 then joins."
         ),
@@ -84,14 +84,14 @@ def _parse_args() -> argparse.Namespace:
         "--registry-host",
         dest="registry_host",
         default=None,
-        help="Connect to an existing backend registry host (external mode).",
+        help="Connect to an existing backend registry host (standalone mode).",
     )
     parser.add_argument(
         "--registry-port",
         dest="registry_port",
         type=int,
         default=None,
-        help="Connect to an existing backend registry port (external mode).",
+        help="Connect to an existing backend registry port (standalone mode).",
     )
     parser.add_argument(
         "--registry-service",
@@ -111,8 +111,8 @@ def main() -> None:
         if args.web_port is not None:
             os.environ["MCP_PORT"] = str(int(args.web_port))
 
-    if args.iar_stage:
-        os.environ["IAR_STAGE"] = args.iar_stage
+    if args.iar_path:
+        os.environ["IAR_PATH"] = args.iar_path
 
     if args.service_launcher:
         os.environ["THRIFT_SERVICE_LAUNCHER_EXE"] = args.service_launcher
@@ -121,7 +121,7 @@ def main() -> None:
     if args.ide_services is not None:
         os.environ["THRIFT_IDE_SERVICES"] = args.ide_services
 
-    if args.iar_stage or args.cspyserver2 or args.service_launcher:
+    if args.iar_path or args.cspyserver2 or args.service_launcher:
         os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
         # Avoid stale standalone-mode registry env vars pinning managed startup
         # to an old/conflicting port. Managed mode can still use a fixed

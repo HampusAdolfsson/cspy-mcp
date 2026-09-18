@@ -1146,7 +1146,7 @@ def _ensure_ide_service(key: str, force: bool = False) -> dict[str, Any]:
         if cfg.registry_port is None:
             raise ThriftBridgeError(
                 f"Cannot reach IDE service {key!r} ({registry_name}): no service registry "
-                "configured. Either run with --service-launcher --iar-stage <stage> so "
+                "configured. Either run with --service-launcher --iar-path <stage> so "
                 "the bridge hosts the IDE services itself, or point "
                 "THRIFT_REGISTRY_HOST/THRIFT_REGISTRY_PORT at a backend that already "
                 "hosts them."
@@ -1166,7 +1166,7 @@ def _ensure_ide_service(key: str, force: bool = False) -> dict[str, Any]:
                 f"IDE service {key!r} ({registry_name}) is not registered, and the backend "
                 f"has no {SERVICE_MANAGER_SERVICE} service to start it with. CSpyServer2 "
                 "alone cannot host IDE services: run the bridge with "
-                "--service-launcher --iar-stage <stage>, or point it at an "
+                "--service-launcher --iar-path <stage>, or point it at an "
                 "IarServiceLauncher/iaride backend. "
                 f"Services currently registered: {', '.join(sorted(present)) or '<none>'}."
             )
@@ -1516,7 +1516,7 @@ def thrift_connection_info() -> dict[str, Any]:
         "cspy_args": cfg.cspy_args,
         "cspy_start_timeout_ms": cfg.cspy_start_timeout_ms,
         "cspy_restart_on_failure": cfg.cspy_restart_on_failure,
-        "iar_stage": str(cfg.iar_stage) if cfg.iar_stage else None,
+        "iar_path": str(cfg.iar_path) if cfg.iar_path else None,
         "service_launcher_exe": (
             str(cfg.launcher_executable) if cfg.launcher_executable else None
         ),
@@ -3432,7 +3432,7 @@ def ide_services_status() -> dict[str, Any]:
 
     data: dict[str, Any] = {
         "cspy_mode": cfg.cspy_mode,
-        "iar_stage": str(cfg.iar_stage) if cfg.iar_stage else None,
+        "iar_path": str(cfg.iar_path) if cfg.iar_path else None,
         "auto_ide_services": cfg.auto_ide_services,
         "configured_services": cfg.ide_services or sorted(IDE_SERVICES),
         "service_launcher_exe": (

@@ -9,10 +9,10 @@
 # Headless equivalent of run_iaride.sh: same services, no GUI. Use run_web.sh
 # for the same thing over HTTP instead of stdio.
 #
-#   ./run_headless.sh <iar-stage>
+#   ./run_headless.sh <iar-path>
 #
-# <iar-stage> is a stage or installation directory, i.e. the one with common/bin
-# under it. Every program used here is taken from <iar-stage>/common/bin.
+# <iar-path> is an IAR installation or build stage, i.e. the directory with
+# under it. Every program used here is taken from <iar-path>/common/bin.
 #
 # Point an MCP host at it, for example in .mcp.json:
 #
@@ -26,7 +26,7 @@
 #   }
 #
 # Env vars:
-#   IAR_STAGE            the stage, if not given as an argument
+#   IAR_PATH             the IAR path, if not given as an argument
 #   NO_IDE_SERVICES=1    debugger only, no IarServiceLauncher
 #   THRIFT_IDE_SERVICES  restrict which IDE services to host,
 #                        e.g. "projectmanager"
@@ -42,23 +42,23 @@ if [ ! -x "$PYTHON" ]; then
   PYTHON="python3"
 fi
 
-STAGE="${1:-${IAR_STAGE:-}}"
+IAR_PATH="${1:-${IAR_PATH:-}}"
 [ "$#" -gt 0 ] && shift
 
 # Diagnostics go to stderr: on stdio, stdout carries the MCP protocol and
 # nothing else. The backends' own output is captured to log files by the bridge.
-if [ -z "$STAGE" ]; then
-  echo "Path to an IAR stage is required." >&2
-  echo "Pass it as the first argument or set IAR_STAGE." >&2
+if [ -z "$IAR_PATH" ]; then
+  echo "Path to an IAR installation is required." >&2
+  echo "Pass it as the first argument or set IAR_PATH." >&2
   echo "It is the directory with common/bin under it." >&2
   exit 1
 fi
-if [ ! -d "$STAGE/common/bin" ]; then
-  echo "Not an IAR stage - no common/bin under it: $STAGE" >&2
+if [ ! -d "$IAR_PATH/common/bin" ]; then
+  echo "No common/bin under it, so not an IAR installation: $IAR_PATH" >&2
   exit 1
 fi
 
-ARGS=(--iar-stage "$STAGE")
+ARGS=(--iar-path "$IAR_PATH")
 
 # Dropping the IDE services leaves a plain managed CSpyServer2, which is all the
 # debugger_* tools need.
@@ -71,7 +71,7 @@ if [ -n "${THRIFT_IDE_SERVICES:-}" ]; then
   ARGS+=(--ide-services "$THRIFT_IDE_SERVICES")
 fi
 
-echo "IAR stage: $STAGE (MCP over stdio)" >&2
+echo "IAR path: $IAR_PATH (MCP over stdio)" >&2
 
 # The IDE services are loaded lazily: the first project_* tool call starts the
 # ProjectManager, the first options_* call starts the OptionsService. Call the

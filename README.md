@@ -9,9 +9,9 @@ Licensed under the [MIT License](LICENSE).
 ## Quick Start: Add To Your MCP Client
 
 All examples use managed mode: the MCP server starts the backend itself out of
-an IAR stage or installation - the directory with `common/bin` under it - and
-auto-detects the registry port. Adjust the two paths (the IAR installation and
-this repo) to your machine. Install dependencies first
+an IAR installation or build stage - the directory with `common/bin` under it -
+and auto-detects the registry port. Adjust the two paths (the IAR installation
+and this repo) to your machine. Install dependencies first
 (`pip install -r requirements.txt`).
 
 ### Claude Code
@@ -23,7 +23,7 @@ Add to `.mcp.json` in your project root (or `~/.claude.json` for user scope):
   "mcpServers": {
     "cspy-debugger": {
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--iar-stage", "C:\\iar\\qtarm-10.2.1"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "env": { "PYTHONPATH": "C:\\path\\to\\this-repo" }
     }
   }
@@ -33,7 +33,7 @@ Add to `.mcp.json` in your project root (or `~/.claude.json` for user scope):
 Or from the terminal:
 
 ```bash
-claude mcp add cspy-debugger --env PYTHONPATH=C:\path\to\this-repo -- python -m mcp_thrift_server --iar-stage "C:\iar\qtarm-10.2.1"
+claude mcp add cspy-debugger --env PYTHONPATH=C:\path\to\this-repo -- python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1"
 ```
 
 ### Claude Desktop
@@ -46,7 +46,7 @@ Add the same `mcpServers` block to `claude_desktop_config.json`
   "mcpServers": {
     "cspy-debugger": {
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--iar-stage", "C:\\iar\\qtarm-10.2.1"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "env": { "PYTHONPATH": "C:\\path\\to\\this-repo" }
     }
   }
@@ -64,7 +64,7 @@ Command Palette):
     "cspy-debugger": {
       "type": "stdio",
       "command": "python",
-      "args": ["-m", "mcp_thrift_server", "--iar-stage", "C:\\iar\\qtarm-10.2.1"],
+      "args": ["-m", "mcp_thrift_server", "--iar-path", "C:\\iar\\qtarm-10.2.1"],
       "cwd": "C:\\path\\to\\this-repo"
     }
   }
@@ -73,7 +73,7 @@ Command Palette):
 
 ### Connecting to an already-running backend (standalone mode)
 
-Replace the `--iar-stage` argument with registry flags in any config above:
+Replace the `--iar-path` argument with registry flags in any config above:
 
 ```json
 "args": ["-m", "mcp_thrift_server", "--registry-host", "127.0.0.1", "--registry-port", "51926"]
@@ -86,9 +86,9 @@ needed when your thrift IDLs live outside this repo; see
 ## What it provides
 
 - MCP server over `stdio` (default) or `streamable-http`
-- Managed backend mode: given one path to an IAR stage, spawns and supervises
-  the backend it needs, auto-detects the registry port, and restarts it on
-  failure
+- Managed backend mode: given one path to an IAR installation, spawns and
+  supervises the backend it needs, auto-detects the registry port, and restarts
+  it on failure
 - Runtime loading of the bundled `cspy.thrift` IDL via `thriftpy2`
 - Registry-aware service resolution (debugger, breakpoints, contextmanager,
   memory, disassembly, sourcelookup, symbols, listwindow, libsupport)
@@ -134,24 +134,25 @@ If you connect to an externally started `CSpyServer2.exe -standalone`:
 Two modes, selected by `THRIFT_CSPYSERVER_MODE`.
 
 1. `managed` (default):
-- The bridge starts and supervises the backend itself, out of the IAR stage
-  given by `--iar-stage` (or `IAR_STAGE`) - the directory with `common/bin`
-  under it:
+- The bridge starts and supervises the backend itself, out of the IAR
+  installation given by `--iar-path` (or `IAR_PATH`) - the directory with
+  `common/bin` under it:
   - `IarServiceLauncher`, which owns the service registry and hosts the IDE
     platform services (ProjectManager, OptionsService)
   - `CSpyServer2`, started with `-registry <port>` so it joins that same
     registry rather than creating a second one
 - Every service therefore resolves through one registry, and the `project_*`
   and `options_*` tools work alongside the `debugger_*` ones.
-- Programs the stage does not ship are simply not started: a compiler-only
-  toolchain has no `IarServiceLauncher`, so `CSpyServer2` runs on its own.
+- Programs that installation does not ship are simply not started: a
+  compiler-only toolchain has no `IarServiceLauncher`, so `CSpyServer2` runs on
+  its own.
   `--no-ide-services` chooses that deliberately.
 - It parses the backend's stdout for
   `Service registry running on local socket on port: <port>`, and restarts an
   unhealthy process when `THRIFT_CSPYSERVER_RESTART_ON_FAILURE=1`.
 
 ```sh
-python -m mcp_thrift_server --iar-stage /opt/iar/ewarm
+python -m mcp_thrift_server --iar-path /opt/iar/ewarm
 ```
 
 2. `standalone`:
@@ -162,7 +163,7 @@ python -m mcp_thrift_server --iar-stage /opt/iar/ewarm
   - optional `--registry-service` (default: `debugger`)
 
 `--cspyserver2` and `--service-launcher` still take individual program paths,
-overriding what the stage provides; they are rarely needed.
+overriding what `--iar-path` provides; they are rarely needed.
 (`THRIFT_CSPYSERVER_MODE=external` is accepted as the old name for
 `standalone`.)
 
@@ -174,13 +175,13 @@ and how to check them.
 Managed mode (starts the backend from the stage, auto-detects registry port):
 
 ```powershell
-python -m mcp_thrift_server --iar-stage "C:\iar\qtarm-10.2.1"
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1"
 ```
 
 Optional custom CSpyServer2 args:
 
 ```powershell
-python -m mcp_thrift_server --iar-stage "C:\iar\qtarm-10.2.1" --cspyserver2-args "-standalone -sockets"
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1" --cspyserver2-args "-standalone -sockets"
 ```
 
 Standalone mode (connect to an already-running backend registry):
@@ -213,20 +214,20 @@ Terminal-only health probe (starts managed CSpyServer2, parses registry port,
 prints status, exits):
 
 ```powershell
-python -m mcp_thrift_server --iar-stage "C:\iar\qtarm-10.2.1" --probe-cspyserver2
+python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1" --probe-cspyserver2
 ```
 
 ### Helper scripts (Linux/macOS)
 
-Three thin wrappers, one per way of running the server. Each takes the IAR stage
-as its first argument or from `IAR_STAGE`, and uses `.venv/bin/python3` when
+Three thin wrappers, one per way of running the server. Each takes the IAR path
+as its first argument or from `IAR_PATH`, and uses `.venv/bin/python3` when
 present.
 
 | Script | Transport | Backend |
 | --- | --- | --- |
-| `run_headless.sh <stage>` | **stdio** | managed: starts IarServiceLauncher + CSpyServer2 |
-| `run_web.sh <stage>` | HTTP on `MCP_PORT` | the same managed backend |
-| `run_iaride.sh <stage>` | HTTP on `MCP_PORT` | standalone: starts IarIde and resolves through its registry |
+| `run_headless.sh <iar-path>` | **stdio** | managed: starts IarServiceLauncher + CSpyServer2 |
+| `run_web.sh <iar-path>` | HTTP on `MCP_PORT` | the same managed backend |
+| `run_iaride.sh <iar-path>` | HTTP on `MCP_PORT` | standalone: starts IarIde and resolves through its registry |
 
 `run_headless.sh` is the one to give an MCP host, since hosts launch the server
 and talk to it over stdio:

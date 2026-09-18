@@ -3,7 +3,7 @@
 CSpyServer2 hosts only the debugger-side services (`debugger`, `breakpoints`,
 `debugger.contextmanager`, `debugger.memory`, `disassembly`, `sourcelookup`).
 It has no service manager, so it cannot load the IDE platform's service
-libraries. Those live in dynamic libraries next to it in the stage
+libraries. Those live in dynamic libraries next to it in the installation
 (`libProjectManagerHandler.so`, `libOptionsService.so`) and are hosted by
 `IarServiceLauncher`, which:
 
@@ -19,7 +19,7 @@ one launcher-owned registry ends up holding the debugger services and the IDE
 services together, and every service in this bridge resolves through the same
 registry with no special-casing per service.
 
-That is what managed mode sets up whenever the configured IAR stage ships an
+That is what managed mode sets up whenever the configured IAR path ships an
 IarServiceLauncher. Standalone mode reaches the same services when something
 else already hosts them (a Thrift-enabled `iaride`, or a hand-started
 IarServiceLauncher).
@@ -30,7 +30,7 @@ Manifest path gotcha
 manifest's `libraryName` against *the manifest file's own directory*, and does
 so unconditionally — an absolute `libraryName` gets the manifest directory
 prepended to it and becomes a nonexistent path. So a manifest that lives
-somewhere other than the stage must name its library with a path relative to
+somewhere other than that directory must name its library relative to
 itself, which is what `_render_manifest` does.
 """
 
@@ -169,8 +169,8 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
     if exe is None:
         raise RuntimeError(
             "Cannot host IDE services: no IarServiceLauncher path. Pass "
-            "--iar-stage <stage> (or set IAR_STAGE) and the launcher is taken "
-            "from <stage>/common/bin, or point THRIFT_SERVICE_LAUNCHER_EXE at "
+            "--iar-path <path> (or set IAR_PATH) and the launcher is taken "
+            "from <path>/common/bin, or point THRIFT_SERVICE_LAUNCHER_EXE at "
             "it directly."
         )
     if not exe.exists():
@@ -181,7 +181,7 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
 def service_bin_dir(cfg: ThriftConfig) -> Path:
     """Directory holding the service libraries and their stock manifests.
 
-    Normally ``<stage>/common/bin`` as derived from ``IAR_STAGE``. Falls back to
+    Normally ``<IAR_PATH>/common/bin``. Falls back to
     the directory of whichever of IarServiceLauncher/CSpyServer2 was pointed at
     individually, since both live in that same directory.
     """
@@ -191,8 +191,8 @@ def service_bin_dir(cfg: ThriftConfig) -> Path:
         if exe is not None:
             return exe.parent
     raise RuntimeError(
-        "Cannot locate the IAR service libraries: pass --iar-stage <stage> (or set "
-        "IAR_STAGE) so the bridge knows which <stage>/common/bin to use."
+        "Cannot locate the IAR service libraries: pass --iar-path <path> (or set "
+        "IAR_PATH) so the bridge knows which <path>/common/bin to use."
     )
 
 
@@ -224,7 +224,7 @@ def _render_manifest(spec: dict[str, str], bin_dir: Path, manifest_dir: Path) ->
 def resolve_manifest(cfg: ThriftConfig, key: str) -> Path:
     """Return a manifest path for one IDE service.
 
-    Prefers the manifest shipped in the stage next to the library. Falls back to
+    Prefers the manifest shipped next to the library. Falls back to
     generating an equivalent one in a temp directory, which is needed in
     practice: OptionsService's CMakeLists has an ``install(FILES DESTINATION
     ...)`` with an empty file list, so `OptionsService.json` is absent from the
@@ -243,7 +243,7 @@ def resolve_manifest(cfg: ThriftConfig, key: str) -> Path:
         raise RuntimeError(
             f"Cannot host IDE service {key!r}: neither the manifest {stock} nor the "
             f"service library ({library.name} / {library_dll.name}) exists in {bin_dir}. "
-            "Check --iar-stage / IAR_STAGE."
+            "Check --iar-path / IAR_PATH."
         )
 
     manifest_dir = Path(tempfile.mkdtemp(prefix="iar-service-manifests-"))
