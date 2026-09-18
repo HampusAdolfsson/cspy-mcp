@@ -1,9 +1,11 @@
 import argparse
 import os
+import signal
 import sys
 
 from .config import load_config
 from .cspy_server_manager import ensure_managed_server, managed_server_status, shutdown_managed_server
+from .service_launcher import shutdown_service_launcher
 from .server import mcp
 
 
@@ -138,7 +140,32 @@ def main() -> None:
             file=sys.stderr,
             flush=True,
         )
-    mcp.run(transport=transport, mount_path=mount_path)
+
+    # uvicorn captures SIGTERM, shuts the server down, restores whatever handler
+    # was installed beforehand and then re-raises the signal. With the default
+    # disposition restored that kills the process outright, so neither the
+    # finally below nor the managers' atexit hooks ever run and CSpyServer2 -
+    # plus IarServiceLauncher in launcher mode - is orphaned. Installing our own
+    # handler first means the one uvicorn restores is this one, so the re-raise
+    # lands here and we get to tear the backends down.
+    def _terminate(signum, _frame):
+        shutdown_managed_server()
+        shutdown_service_launcher()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    try:
+        signal.signal(signal.SIGTERM, _terminate)
+    except (ValueError, OSError):
+        pass  # not the main thread, or unsupported on this platform
+
+    try:
+        mcp.run(transport=transport, mount_path=mount_path)
+    finally:
+        # Covers the exit paths that unwind normally, including Ctrl-C;
+        # _terminate above covers SIGTERM. Both are idempotent.
+        shutdown_managed_server()
+        shutdown_service_launcher()
 
 
 if __name__ == "__main__":
