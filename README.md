@@ -135,7 +135,7 @@ Two modes, selected by `THRIFT_CSPYSERVER_MODE`.
 
 1. `managed` (default):
 - The bridge starts and supervises the backend itself, out of the IAR
-  installation given by `--iar-path` (or `IAR_PATH`) - the directory with
+  installation given by `--iar-path` (or `IAR_INSTALL_PATH`) - the directory with
   `common/bin` under it:
   - `IarServiceLauncher`, which owns the service registry and hosts the IDE
     platform services (ProjectManager, OptionsService)
@@ -220,7 +220,7 @@ python -m mcp_thrift_server --iar-path "C:\iar\qtarm-10.2.1" --probe-cspyserver2
 ### Helper scripts (Linux/macOS)
 
 Three thin wrappers, one per way of running the server. Each takes the IAR path
-as its first argument or from `IAR_PATH`, and uses `.venv/bin/python3` when
+as its first argument or from `IAR_INSTALL_PATH`, and uses `.venv/bin/python3` when
 present.
 
 | Script | Transport | Backend |

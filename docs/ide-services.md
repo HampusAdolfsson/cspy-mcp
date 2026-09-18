@@ -68,7 +68,7 @@ python -m mcp_thrift_server --iar-path /path/to/install
 or via the environment:
 
 ```sh
-export IAR_PATH=/path/to/install
+export IAR_INSTALL_PATH=/path/to/install
 python -m mcp_thrift_server
 ```
 
@@ -191,8 +191,8 @@ and which manifest would be used for each missing service:
 | --- | --- |
 | `... has no com.iar.thrift.service.manager service to start it with` | Only a bare `CSpyServer2` is running. Pass `--iar-path` so the bridge hosts the services, or point at a launcher/iaride registry. The error lists the services the registry *did* have. |
 | `Cannot reach IDE service ...: no service registry configured` | No registry at all: pass `--iar-path`, or set `THRIFT_REGISTRY_HOST`/`THRIFT_REGISTRY_PORT`. |
-| `Cannot host IDE services: no IarServiceLauncher path` | No `--iar-path`/`IAR_PATH`, or that installation does not ship the launcher. |
-| `neither the manifest ... nor the service library ... exists` | Wrong path. Check `--iar-path`/`IAR_PATH`. |
+| `Cannot host IDE services: no IarServiceLauncher path` | No `--iar-path`/`IAR_INSTALL_PATH`, or that installation does not ship the launcher. |
+| `neither the manifest ... nor the service library ... exists` | Wrong path. Check `--iar-path`/`IAR_INSTALL_PATH`. |
 | `CSpyServer2 was asked to join registry port N but reported port M` | CSpyServer2 did not attach to the launcher's registry; check its log path in the error. |
 | `Timed out waiting for the IarServiceLauncher registry port` | Raise `THRIFT_SERVICE_LAUNCHER_START_TIMEOUT_MS`; the error includes the launcher log path. |
 | `OptionsService CreateSession failed: Project not found: <path>` | The project is not loaded in the project manager. Call `project_load_workspace(<path>)` first. |
@@ -225,14 +225,14 @@ Environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IAR_PATH` | — | The IAR installation or build stage, i.e. the directory with `common/bin` under it. Normally the only path needed. |
+| `IAR_INSTALL_PATH` | — | The IAR installation or build stage, i.e. the directory with `common/bin` under it. Normally the only path needed. |
 | `THRIFT_CSPYSERVER_MODE` | `managed` | `managed` (the bridge starts the backend) or `standalone` (connect to a running one). `external` and `launcher` are accepted as the names these used before. |
 | `THRIFT_HOST_IDE_SERVICES` | `1` | `0` runs the debugger alone, with no IarServiceLauncher. Same as `--no-ide-services`. |
 | `THRIFT_IDE_SERVICES` | both | Comma-separated subset: `projectmanager`, `options`. |
 | `THRIFT_AUTO_IDE_SERVICES` | `1` | Auto-start a missing service on the first `project_*`/`options_*` call. |
-| `THRIFT_SERVICE_LAUNCHER_EXE` | from `IAR_PATH` | Path to `IarServiceLauncher`, overriding `IAR_PATH`. |
-| `THRIFT_CSPYSERVER_EXE` | from `IAR_PATH` | Path to `CSpyServer2`, overriding `IAR_PATH`. |
-| `THRIFT_SERVICE_BIN_DIR` | `<IAR_PATH>/common/bin` | Where the service libraries and shipped manifests live. |
+| `THRIFT_SERVICE_LAUNCHER_EXE` | from `IAR_INSTALL_PATH` | Path to `IarServiceLauncher`, overriding `IAR_INSTALL_PATH`. |
+| `THRIFT_CSPYSERVER_EXE` | from `IAR_INSTALL_PATH` | Path to `CSpyServer2`, overriding `IAR_INSTALL_PATH`. |
+| `THRIFT_SERVICE_BIN_DIR` | `<IAR_INSTALL_PATH>/common/bin` | Where the service libraries and shipped manifests live. |
 | `THRIFT_SERVICE_LAUNCHER_START_TIMEOUT_MS` | `40000` | Wait for the launcher's registry banner. Higher than CSpyServer2's because the launcher loads the service libraries. |
 | `THRIFT_SERVICE_LAUNCHER_RESTART_ON_FAILURE` | `1` | Retry launcher startup once. |
 | `THRIFT_PROJECTMANAGER_SERVICE_NAME` | `com.iar.thrift.service.projectmanager` | Registry name override. |

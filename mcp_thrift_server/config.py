@@ -135,7 +135,7 @@ def load_config() -> ThriftConfig:
 
     # One path for the whole toolchain; the individual program paths below stay
     # supported and win over it when set.
-    iar_path_raw = os.getenv("IAR_PATH")
+    iar_path_raw = os.getenv("IAR_INSTALL_PATH")
     iar_path = Path(iar_path_raw).expanduser().resolve() if iar_path_raw else None
     bin_dir = _iar_bin_dir(iar_path)
 

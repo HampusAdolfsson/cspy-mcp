@@ -169,7 +169,7 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
     if exe is None:
         raise RuntimeError(
             "Cannot host IDE services: no IarServiceLauncher path. Pass "
-            "--iar-path <path> (or set IAR_PATH) and the launcher is taken "
+            "--iar-path <path> (or set IAR_INSTALL_PATH) and the launcher is taken "
             "from <path>/common/bin, or point THRIFT_SERVICE_LAUNCHER_EXE at "
             "it directly."
         )
@@ -181,7 +181,7 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
 def service_bin_dir(cfg: ThriftConfig) -> Path:
     """Directory holding the service libraries and their stock manifests.
 
-    Normally ``<IAR_PATH>/common/bin``. Falls back to
+    Normally ``<IAR_INSTALL_PATH>/common/bin``. Falls back to
     the directory of whichever of IarServiceLauncher/CSpyServer2 was pointed at
     individually, since both live in that same directory.
     """
@@ -192,7 +192,7 @@ def service_bin_dir(cfg: ThriftConfig) -> Path:
             return exe.parent
     raise RuntimeError(
         "Cannot locate the IAR service libraries: pass --iar-path <path> (or set "
-        "IAR_PATH) so the bridge knows which <path>/common/bin to use."
+        "IAR_INSTALL_PATH) so the bridge knows which <path>/common/bin to use."
     )
 
 
@@ -243,7 +243,7 @@ def resolve_manifest(cfg: ThriftConfig, key: str) -> Path:
         raise RuntimeError(
             f"Cannot host IDE service {key!r}: neither the manifest {stock} nor the "
             f"service library ({library.name} / {library_dll.name}) exists in {bin_dir}. "
-            "Check --iar-path / IAR_PATH."
+            "Check --iar-path / IAR_INSTALL_PATH."
         )
 
     manifest_dir = Path(tempfile.mkdtemp(prefix="iar-service-manifests-"))

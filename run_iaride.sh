@@ -7,7 +7,7 @@
 # under it. iaride is taken from <iar-path>/common/bin.
 #
 # Env vars:
-#   IAR_PATH    the IAR path, if not given as an argument
+#   IAR_INSTALL_PATH  the installation, if not given as an argument
 #   IARIDE_EXE  override the iaride path
 #   MCP_PORT    HTTP port to listen on (default 8000)
 #
@@ -26,16 +26,16 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 WEB_PORT="${MCP_PORT:-8000}"
-IAR_PATH="${1:-${IAR_PATH:-}}"
+IAR_INSTALL_PATH="${1:-${IAR_INSTALL_PATH:-}}"
 REGISTRY_FILE="$SCRIPT_DIR/CSpyServer2-ServiceRegistry.txt"
 
-if [ -z "$IAR_PATH" ] && [ -z "${IARIDE_EXE:-}" ]; then
+if [ -z "$IAR_INSTALL_PATH" ] && [ -z "${IARIDE_EXE:-}" ]; then
   echo "Path to an IAR installation is required." >&2
-  echo "Pass it as the first argument or set IAR_PATH." >&2
+  echo "Pass it as the first argument or set IAR_INSTALL_PATH." >&2
   echo "It is the directory with common/bin under it." >&2
   exit 1
 fi
-IARIDE="${IARIDE_EXE:-$IAR_PATH/common/bin/iaride}"
+IARIDE="${IARIDE_EXE:-$IAR_INSTALL_PATH/common/bin/iaride}"
 if [ ! -x "$IARIDE" ]; then
   echo "iaride not found or not executable: $IARIDE" >&2
   exit 1

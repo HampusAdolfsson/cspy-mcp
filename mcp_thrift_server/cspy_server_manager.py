@@ -141,7 +141,7 @@ def _resolve_executable(cfg: ThriftConfig) -> Path:
     exe = cfg.cspy_executable
     if exe is None:
         raise RuntimeError(
-            "No CSpyServer2 path. Pass --iar-path <path> (or set IAR_PATH) and it "
+            "No CSpyServer2 path. Pass --iar-path <path> (or set IAR_INSTALL_PATH) and it "
             "is taken from <path>/common/bin, or point THRIFT_CSPYSERVER_EXE at it "
             "directly."
         )

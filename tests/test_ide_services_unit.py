@@ -104,7 +104,7 @@ def test_config_from_stage(monkeypatch, tmp_path):
     stage = bin_dir.parent.parent
     cfg = _config(
         monkeypatch,
-        IAR_PATH=str(stage),
+        IAR_INSTALL_PATH=str(stage),
         THRIFT_IDE_SERVICES="options, projectmanager",
         THRIFT_AUTO_IDE_SERVICES="0",
     )
@@ -124,7 +124,7 @@ def test_config_explicit_paths_override_the_stage(monkeypatch, tmp_path):
     elsewhere.mkdir()
     cfg = _config(
         monkeypatch,
-        IAR_PATH=str(stage),
+        IAR_INSTALL_PATH=str(stage),
         THRIFT_CSPYSERVER_EXE=str(elsewhere / "CSpyServer2"),
         THRIFT_SERVICE_LAUNCHER_EXE=str(elsewhere / "IarServiceLauncher"),
     )
@@ -145,7 +145,7 @@ def test_config_stage_without_a_launcher(monkeypatch, tmp_path):
     bin_dir = tmp_path / "stage" / "common" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "CSpyServer2").write_text("#!/bin/sh\n")
-    cfg = _config(monkeypatch, IAR_PATH=str(tmp_path / "stage"))
+    cfg = _config(monkeypatch, IAR_INSTALL_PATH=str(tmp_path / "stage"))
     assert cfg.cspy_executable == bin_dir / "CSpyServer2"
     assert cfg.launcher_executable is None
 
@@ -154,7 +154,7 @@ def test_config_host_ide_services_opt_out(monkeypatch, tmp_path):
     bin_dir = _fake_stage(tmp_path)
     cfg = _config(
         monkeypatch,
-        IAR_PATH=str(bin_dir.parent.parent),
+        IAR_INSTALL_PATH=str(bin_dir.parent.parent),
         THRIFT_HOST_IDE_SERVICES="0",
     )
     assert cfg.host_ide_services is False

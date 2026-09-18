@@ -26,7 +26,7 @@
 #   }
 #
 # Env vars:
-#   IAR_PATH             the IAR path, if not given as an argument
+#   IAR_INSTALL_PATH     the installation, if not given as an argument
 #   NO_IDE_SERVICES=1    debugger only, no IarServiceLauncher
 #   THRIFT_IDE_SERVICES  restrict which IDE services to host,
 #                        e.g. "projectmanager"
@@ -42,23 +42,23 @@ if [ ! -x "$PYTHON" ]; then
   PYTHON="python3"
 fi
 
-IAR_PATH="${1:-${IAR_PATH:-}}"
+IAR_INSTALL_PATH="${1:-${IAR_INSTALL_PATH:-}}"
 [ "$#" -gt 0 ] && shift
 
 # Diagnostics go to stderr: on stdio, stdout carries the MCP protocol and
 # nothing else. The backends' own output is captured to log files by the bridge.
-if [ -z "$IAR_PATH" ]; then
+if [ -z "$IAR_INSTALL_PATH" ]; then
   echo "Path to an IAR installation is required." >&2
-  echo "Pass it as the first argument or set IAR_PATH." >&2
+  echo "Pass it as the first argument or set IAR_INSTALL_PATH." >&2
   echo "It is the directory with common/bin under it." >&2
   exit 1
 fi
-if [ ! -d "$IAR_PATH/common/bin" ]; then
-  echo "No common/bin under it, so not an IAR installation: $IAR_PATH" >&2
+if [ ! -d "$IAR_INSTALL_PATH/common/bin" ]; then
+  echo "No common/bin under it, so not an IAR installation: $IAR_INSTALL_PATH" >&2
   exit 1
 fi
 
-ARGS=(--iar-path "$IAR_PATH")
+ARGS=(--iar-path "$IAR_INSTALL_PATH")
 
 # Dropping the IDE services leaves a plain managed CSpyServer2, which is all the
 # debugger_* tools need.
@@ -71,7 +71,7 @@ if [ -n "${THRIFT_IDE_SERVICES:-}" ]; then
   ARGS+=(--ide-services "$THRIFT_IDE_SERVICES")
 fi
 
-echo "IAR path: $IAR_PATH (MCP over stdio)" >&2
+echo "IAR installation: $IAR_INSTALL_PATH (MCP over stdio)" >&2
 
 # The IDE services are loaded lazily: the first project_* tool call starts the
 # ProjectManager, the first options_* call starts the OptionsService. Call the

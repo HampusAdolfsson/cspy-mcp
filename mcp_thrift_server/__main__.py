@@ -112,7 +112,7 @@ def main() -> None:
             os.environ["MCP_PORT"] = str(int(args.web_port))
 
     if args.iar_path:
-        os.environ["IAR_PATH"] = args.iar_path
+        os.environ["IAR_INSTALL_PATH"] = args.iar_path
 
     if args.service_launcher:
         os.environ["THRIFT_SERVICE_LAUNCHER_EXE"] = args.service_launcher
