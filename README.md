@@ -213,6 +213,32 @@ prints status, exits):
 python -m mcp_thrift_server --cspyserver2 "C:\iar\qtarm-10.2.1\common\bin\CSpyServer2.exe" --probe-cspyserver2
 ```
 
+### Helper scripts (Linux/macOS)
+
+Three thin wrappers that serve the MCP endpoint over HTTP on `MCP_PORT`
+(default 8000), one per backend arrangement. Each takes its path as the first
+argument or from an environment variable, and uses `.venv/bin/python3` when
+present.
+
+| Script | Backend | Tools available |
+| --- | --- | --- |
+| `run_web.sh <CSpyServer2>` | managed: spawns CSpyServer2 | `debugger_*`, `breakpoints_*`, ... |
+| `run_headless.sh <common/bin>` | launcher: spawns IarServiceLauncher + CSpyServer2 on one registry | all of the above **plus** `project_*` and `options_*` |
+| `run_iaride.sh <iaride>` | external: starts IarIde and resolves through its registry | same as `run_headless.sh`, but with the IDE's GUI |
+
+```sh
+./run_web.sh      /opt/iar/ewarm/common/bin/CSpyServer2
+./run_headless.sh /opt/iar/ewarm/common/bin
+./run_iaride.sh   /opt/iar/ewarm/common/bin/iaride
+
+MCP_PORT=8123 ./run_headless.sh /opt/iar/ewarm/common/bin
+THRIFT_CSPYSERVER_EXE=none ./run_headless.sh /opt/iar/ewarm/common/bin   # no debugger
+THRIFT_IDE_SERVICES=projectmanager ./run_headless.sh /opt/iar/ewarm/common/bin
+```
+
+`run_headless.sh` is the headless equivalent of `run_iaride.sh`: same IDE
+services, no GUI. See [docs/ide-services.md](docs/ide-services.md).
+
 ## Testing (pytest)
 
 Install test dependencies:
