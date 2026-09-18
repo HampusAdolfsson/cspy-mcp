@@ -98,23 +98,86 @@ def test_config_defaults_for_ide_services(monkeypatch):
     assert cfg.auto_ide_services is True
 
 
-def test_config_launcher_mode(monkeypatch, tmp_path):
+def test_config_from_stage(monkeypatch, tmp_path):
+    # One path for the whole toolchain; the programs come from common/bin.
     bin_dir = _fake_stage(tmp_path)
+    stage = bin_dir.parent.parent
     cfg = _config(
         monkeypatch,
-        THRIFT_CSPYSERVER_MODE="launcher",
-        THRIFT_SERVICE_LAUNCHER_EXE=str(bin_dir / "IarServiceLauncher"),
+        IAR_STAGE=str(stage),
         THRIFT_IDE_SERVICES="options, projectmanager",
         THRIFT_AUTO_IDE_SERVICES="0",
     )
-    assert cfg.cspy_mode == "launcher"
+    assert cfg.cspy_mode == "managed"
+    assert cfg.iar_stage == stage
+    assert cfg.service_bin_dir == bin_dir
     assert cfg.launcher_executable == bin_dir / "IarServiceLauncher"
+    assert cfg.cspy_executable == bin_dir / "CSpyServer2"
     assert cfg.ide_services == ["options", "projectmanager"]
     assert cfg.auto_ide_services is False
 
 
-def test_config_rejects_unknown_mode(monkeypatch):
-    assert _config(monkeypatch, THRIFT_CSPYSERVER_MODE="nonsense").cspy_mode == "managed"
+def test_config_explicit_paths_override_the_stage(monkeypatch, tmp_path):
+    bin_dir = _fake_stage(tmp_path)
+    stage = bin_dir.parent.parent
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    cfg = _config(
+        monkeypatch,
+        IAR_STAGE=str(stage),
+        THRIFT_CSPYSERVER_EXE=str(elsewhere / "CSpyServer2"),
+        THRIFT_SERVICE_LAUNCHER_EXE=str(elsewhere / "IarServiceLauncher"),
+    )
+    assert cfg.cspy_executable == elsewhere / "CSpyServer2"
+    assert cfg.launcher_executable == elsewhere / "IarServiceLauncher"
+
+
+def test_config_explicit_missing_path_is_not_silently_dropped(monkeypatch, tmp_path):
+    # A stage that does not ship a program yields None so the bridge can do
+    # without it, but a path given by hand must still surface as an error later.
+    cfg = _config(monkeypatch, THRIFT_CSPYSERVER_EXE=str(tmp_path / "nope" / "CSpyServer2"))
+    assert cfg.cspy_executable == tmp_path / "nope" / "CSpyServer2"
+
+
+def test_config_stage_without_a_launcher(monkeypatch, tmp_path):
+    # A compiler-only toolchain has no IarServiceLauncher; managed mode then
+    # just runs CSpyServer2 on its own, as it always did.
+    bin_dir = tmp_path / "stage" / "common" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "CSpyServer2").write_text("#!/bin/sh\n")
+    cfg = _config(monkeypatch, IAR_STAGE=str(tmp_path / "stage"))
+    assert cfg.cspy_executable == bin_dir / "CSpyServer2"
+    assert cfg.launcher_executable is None
+
+
+def test_config_host_ide_services_opt_out(monkeypatch, tmp_path):
+    bin_dir = _fake_stage(tmp_path)
+    cfg = _config(
+        monkeypatch,
+        IAR_STAGE=str(bin_dir.parent.parent),
+        THRIFT_HOST_IDE_SERVICES="0",
+    )
+    assert cfg.host_ide_services is False
+    assert cfg.launcher_executable is None
+    assert cfg.cspy_executable == bin_dir / "CSpyServer2"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, "managed"),
+        ("managed", "managed"),
+        ("standalone", "standalone"),
+        # Names this setting used before the modes were reduced to two.
+        ("external", "standalone"),
+        ("launcher", "managed"),
+        ("STANDALONE", "standalone"),
+        ("nonsense", "managed"),
+    ],
+)
+def test_config_mode_names_and_aliases(monkeypatch, raw, expected):
+    env = {"THRIFT_CSPYSERVER_MODE": raw} if raw is not None else {}
+    assert _config(monkeypatch, **env).cspy_mode == expected
 
 
 # --------------------------------------------------------------------------
@@ -145,7 +208,7 @@ def test_service_bin_dir_falls_back_to_launcher_then_cspyserver(monkeypatch, tmp
 
 def test_service_bin_dir_without_any_hint_raises(monkeypatch):
     cfg = _config(monkeypatch)
-    with pytest.raises(RuntimeError, match="THRIFT_SERVICE_LAUNCHER_EXE"):
+    with pytest.raises(RuntimeError, match="--iar-stage"):
         service_launcher.service_bin_dir(cfg)
 
 
@@ -233,20 +296,20 @@ def test_cspy_args_join_overrides_configured_args(monkeypatch):
     assert "-standalone" not in cspy_server_manager._cspy_args(cfg, 5)
 
 
-def test_ensure_launcher_registry_requires_launcher_mode(monkeypatch):
-    cfg = _config(monkeypatch)
-    with pytest.raises(RuntimeError, match="launcher"):
+def test_ensure_launcher_registry_requires_managed_mode(monkeypatch):
+    cfg = _config(monkeypatch, THRIFT_CSPYSERVER_MODE="standalone")
+    with pytest.raises(RuntimeError, match="managed"):
         service_launcher.ensure_launcher_registry(cfg)
 
 
-def test_resolve_launcher_executable_error_mentions_env_var(monkeypatch):
-    cfg = _config(monkeypatch, THRIFT_CSPYSERVER_MODE="launcher")
-    with pytest.raises(RuntimeError, match="THRIFT_SERVICE_LAUNCHER_EXE"):
+def test_resolve_launcher_executable_error_points_at_the_stage_option(monkeypatch):
+    cfg = _config(monkeypatch)
+    with pytest.raises(RuntimeError, match="--iar-stage"):
         service_launcher._resolve_launcher_executable(cfg)
 
 
 def test_resolve_launcher_executable_missing_file(monkeypatch, tmp_path):
-    cfg = _config(monkeypatch, THRIFT_CSPYSERVER_MODE="launcher")
+    cfg = _config(monkeypatch)
     cfg = replace(cfg, launcher_executable=tmp_path / "nope" / "IarServiceLauncher")
     with pytest.raises(RuntimeError, match="not found"):
         service_launcher._resolve_launcher_executable(cfg)
@@ -268,7 +331,7 @@ def ide_env(server_module, monkeypatch, tmp_path):
     bin_dir = _fake_stage(
         tmp_path, libraries=("ProjectManagerHandler", "OptionsService"), manifests=("projectmanager.json",)
     )
-    monkeypatch.setenv("THRIFT_CSPYSERVER_MODE", "external")
+    monkeypatch.setenv("THRIFT_CSPYSERVER_MODE", "standalone")
     monkeypatch.setenv("THRIFT_REGISTRY_HOST", "127.0.0.1")
     monkeypatch.setenv("THRIFT_REGISTRY_PORT", "4711")
     monkeypatch.setenv("THRIFT_SERVICE_LAUNCHER_EXE", str(bin_dir / "IarServiceLauncher"))
@@ -343,7 +406,7 @@ def test_ensure_ide_service_without_service_manager_explains_cspyserver_limitati
 
     message = str(excinfo.value)
     assert "CSpyServer2 alone cannot host IDE services" in message
-    assert "THRIFT_CSPYSERVER_MODE=launcher" in message
+    assert "--service-launcher --iar-stage <stage>" in message
     # The registry snapshot is included so the caller can see what it did get.
     assert "debugger" in message
     assert loaded == []

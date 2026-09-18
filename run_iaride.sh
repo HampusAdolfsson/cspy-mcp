@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Run the bridge over HTTP against a Thrift-enabled IarIde (the IAR IDE).
 #
-#   ./run_iaride.sh [/path/to/iaride]
+#   ./run_iaride.sh <iar-stage>
+#
+# <iar-stage> is a stage or installation directory, i.e. the one with common/bin
+# under it. iaride is taken from <iar-stage>/common/bin.
 #
 # Env vars:
-#   IARIDE_EXE  path to the iaride executable (if not given as an argument)
+#   IAR_STAGE   the stage, if not given as an argument
+#   IARIDE_EXE  override the iaride path
 #   MCP_PORT    HTTP port to listen on (default 8000)
 #
 # IarIde hosts the IDE platform services - ProjectManager and OptionsService -
@@ -22,15 +26,16 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 WEB_PORT="${MCP_PORT:-8000}"
-IARIDE="${1:-${IARIDE_EXE:-}}"
+STAGE="${1:-${IAR_STAGE:-}}"
 REGISTRY_FILE="$SCRIPT_DIR/CSpyServer2-ServiceRegistry.txt"
 
-if [ -z "$IARIDE" ]; then
-  echo "Path to the iaride executable is required." >&2
-  echo "Pass it as the first argument or set IARIDE_EXE." >&2
-  echo "It lives in <install>/common/bin of an IAR IDE installation." >&2
+if [ -z "$STAGE" ] && [ -z "${IARIDE_EXE:-}" ]; then
+  echo "Path to an IAR stage is required." >&2
+  echo "Pass it as the first argument or set IAR_STAGE." >&2
+  echo "It is the directory with common/bin under it." >&2
   exit 1
 fi
+IARIDE="${IARIDE_EXE:-$STAGE/common/bin/iaride}"
 if [ ! -x "$IARIDE" ]; then
   echo "iaride not found or not executable: $IARIDE" >&2
   exit 1

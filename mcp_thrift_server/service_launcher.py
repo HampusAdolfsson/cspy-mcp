@@ -19,9 +19,10 @@ one launcher-owned registry ends up holding the debugger services and the IDE
 services together, and every service in this bridge resolves through the same
 registry with no special-casing per service.
 
-That is what `THRIFT_CSPYSERVER_MODE=launcher` sets up. `external` mode reaches
-the same services when something else already hosts them (a Thrift-enabled
-`iaride`, or a hand-started IarServiceLauncher).
+That is what managed mode sets up whenever the configured IAR stage ships an
+IarServiceLauncher. Standalone mode reaches the same services when something
+else already hosts them (a Thrift-enabled `iaride`, or a hand-started
+IarServiceLauncher).
 
 Manifest path gotcha
 --------------------
@@ -167,10 +168,10 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
     exe = cfg.launcher_executable
     if exe is None:
         raise RuntimeError(
-            "Cannot host IDE services: set THRIFT_SERVICE_LAUNCHER_EXE to the "
-            "IarServiceLauncher executable in the IAR stage/installation "
-            "(or pass --service-launcher). It sits next to CSpyServer2 in "
-            "<install>/common/bin."
+            "Cannot host IDE services: no IarServiceLauncher path. Pass "
+            "--iar-stage <stage> (or set IAR_STAGE) and the launcher is taken "
+            "from <stage>/common/bin, or point THRIFT_SERVICE_LAUNCHER_EXE at "
+            "it directly."
         )
     if not exe.exists():
         raise RuntimeError(f"IarServiceLauncher executable not found: {exe}")
@@ -180,9 +181,9 @@ def _resolve_launcher_executable(cfg: ThriftConfig) -> Path:
 def service_bin_dir(cfg: ThriftConfig) -> Path:
     """Directory holding the service libraries and their stock manifests.
 
-    Defaults to the directory of whichever of IarServiceLauncher/CSpyServer2 is
-    configured, since both live in ``<install>/common/bin`` alongside the
-    service libraries.
+    Normally ``<stage>/common/bin`` as derived from ``IAR_STAGE``. Falls back to
+    the directory of whichever of IarServiceLauncher/CSpyServer2 was pointed at
+    individually, since both live in that same directory.
     """
     if cfg.service_bin_dir is not None:
         return cfg.service_bin_dir
@@ -190,8 +191,8 @@ def service_bin_dir(cfg: ThriftConfig) -> Path:
         if exe is not None:
             return exe.parent
     raise RuntimeError(
-        "Cannot locate the IAR service libraries: set THRIFT_SERVICE_LAUNCHER_EXE "
-        "(or THRIFT_SERVICE_BIN_DIR) so the bridge knows which <install>/common/bin to use."
+        "Cannot locate the IAR service libraries: pass --iar-stage <stage> (or set "
+        "IAR_STAGE) so the bridge knows which <stage>/common/bin to use."
     )
 
 
@@ -242,7 +243,7 @@ def resolve_manifest(cfg: ThriftConfig, key: str) -> Path:
         raise RuntimeError(
             f"Cannot host IDE service {key!r}: neither the manifest {stock} nor the "
             f"service library ({library.name} / {library_dll.name}) exists in {bin_dir}. "
-            "Check THRIFT_SERVICE_BIN_DIR / THRIFT_SERVICE_LAUNCHER_EXE."
+            "Check --iar-stage / IAR_STAGE."
         )
 
     manifest_dir = Path(tempfile.mkdtemp(prefix="iar-service-manifests-"))
@@ -396,10 +397,10 @@ def _is_running_and_healthy_locked(cfg: ThriftConfig) -> bool:
 
 def ensure_launcher_registry(cfg: ThriftConfig) -> tuple[str, int]:
     """Start (or reuse) an IarServiceLauncher-owned registry; return its endpoint."""
-    if cfg.cspy_mode != "launcher":
+    if cfg.cspy_mode != "managed":
         raise RuntimeError(
             "An IarServiceLauncher-hosted registry is only started in "
-            "THRIFT_CSPYSERVER_MODE=launcher"
+            f"THRIFT_CSPYSERVER_MODE=managed; the current mode is {cfg.cspy_mode!r}"
         )
 
     with _STATE.lock:

@@ -23,10 +23,22 @@ def _parse_args() -> argparse.Namespace:
         help="Port to use with --web (default from MCP_PORT or 8000).",
     )
     parser.add_argument(
+        "--iar-stage",
+        dest="iar_stage",
+        default=None,
+        help=(
+            "Path to an IAR stage or installation, i.e. the directory with "
+            "common/bin under it. The programs the bridge needs are taken from "
+            "there, so this is normally the only path you have to give."
+        ),
+    )
+    parser.add_argument(
         "--cspyserver2",
         dest="cspyserver2",
         default=None,
-        help="Path to CSpyServer2 executable. Enables managed mode when provided.",
+        help=(
+            "Path to the CSpyServer2 executable, overriding --iar-stage."
+        ),
     )
     parser.add_argument(
         "--cspyserver2-args",
@@ -39,10 +51,19 @@ def _parse_args() -> argparse.Namespace:
         dest="service_launcher",
         default=None,
         help=(
-            "Path to IarServiceLauncher. Enables launcher mode: the launcher owns "
-            "the service registry and hosts the IDE services (ProjectManager, "
-            "OptionsService), and a CSpyServer2 given via --cspyserver2 joins that "
-            "same registry."
+            "Path to the IarServiceLauncher executable, overriding --iar-stage. "
+            "It hosts the IDE services (ProjectManager, OptionsService) and owns "
+            "the service registry that CSpyServer2 then joins."
+        ),
+    )
+    parser.add_argument(
+        "--no-ide-services",
+        dest="no_ide_services",
+        action="store_true",
+        help=(
+            "Do not host the IDE services: run the debugger alone, without an "
+            "IarServiceLauncher. The project_* and options_* tools are then "
+            "unavailable."
         ),
     )
     parser.add_argument(
@@ -90,40 +111,39 @@ def main() -> None:
         if args.web_port is not None:
             os.environ["MCP_PORT"] = str(int(args.web_port))
 
+    if args.iar_stage:
+        os.environ["IAR_STAGE"] = args.iar_stage
+
     if args.service_launcher:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "launcher"
         os.environ["THRIFT_SERVICE_LAUNCHER_EXE"] = args.service_launcher
-        os.environ.pop("THRIFT_REGISTRY_PORT", None)
-        os.environ.pop("THRIFT_REGISTRY_HOST", None)
+    if args.no_ide_services:
+        os.environ["THRIFT_HOST_IDE_SERVICES"] = "0"
     if args.ide_services is not None:
         os.environ["THRIFT_IDE_SERVICES"] = args.ide_services
 
+    if args.iar_stage or args.cspyserver2 or args.service_launcher:
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
+        # Avoid stale standalone-mode registry env vars pinning managed startup
+        # to an old/conflicting port. Managed mode can still use a fixed
+        # registry by passing --cspyserver2-args "... -registry <port>".
+        os.environ.pop("THRIFT_REGISTRY_PORT", None)
+        os.environ.pop("THRIFT_REGISTRY_HOST", None)
     if args.cspyserver2:
-        # Launcher mode already implies a managed CSpyServer2, joining the
-        # launcher's registry rather than starting one of its own.
-        if not args.service_launcher:
-            os.environ["THRIFT_CSPYSERVER_MODE"] = "managed"
         os.environ["THRIFT_CSPYSERVER_EXE"] = args.cspyserver2
-        # Avoid stale external-mode registry env vars pinning managed startup
-        # to an old/conflicting port. Managed mode can still use fixed registry
-        # by passing --cspyserver2-args "... -registry <port>".
-        if not args.service_launcher:
-            os.environ.pop("THRIFT_REGISTRY_PORT", None)
-            os.environ.pop("THRIFT_REGISTRY_HOST", None)
     if args.cspyserver2_args:
         os.environ["THRIFT_CSPYSERVER_ARGS"] = args.cspyserver2_args
 
     if args.registry_host is not None:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "external"
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "standalone"
         os.environ["THRIFT_REGISTRY_HOST"] = str(args.registry_host)
     if args.registry_port is not None:
-        os.environ["THRIFT_CSPYSERVER_MODE"] = "external"
+        os.environ["THRIFT_CSPYSERVER_MODE"] = "standalone"
         os.environ["THRIFT_REGISTRY_PORT"] = str(int(args.registry_port))
     if args.registry_service is not None:
         os.environ["THRIFT_REGISTRY_SERVICE"] = str(args.registry_service)
 
     cfg = load_config()
-    if cfg.cspy_mode in {"managed", "launcher"}:
+    if cfg.cspy_mode == "managed":
         host, port = ensure_managed_server(cfg)
         if args.probe_cspyserver2:
             status = managed_server_status()

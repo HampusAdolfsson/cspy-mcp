@@ -1146,10 +1146,10 @@ def _ensure_ide_service(key: str, force: bool = False) -> dict[str, Any]:
         if cfg.registry_port is None:
             raise ThriftBridgeError(
                 f"Cannot reach IDE service {key!r} ({registry_name}): no service registry "
-                "configured. Either set THRIFT_CSPYSERVER_MODE=launcher plus "
-                "THRIFT_SERVICE_LAUNCHER_EXE so the bridge hosts the IDE services itself, "
-                "or point THRIFT_REGISTRY_HOST/THRIFT_REGISTRY_PORT at a backend that "
-                "already hosts them."
+                "configured. Either run with --service-launcher --iar-stage <stage> so "
+                "the bridge hosts the IDE services itself, or point "
+                "THRIFT_REGISTRY_HOST/THRIFT_REGISTRY_PORT at a backend that already "
+                "hosts them."
             )
 
         present = _registry_service_names()
@@ -1166,8 +1166,8 @@ def _ensure_ide_service(key: str, force: bool = False) -> dict[str, Any]:
                 f"IDE service {key!r} ({registry_name}) is not registered, and the backend "
                 f"has no {SERVICE_MANAGER_SERVICE} service to start it with. CSpyServer2 "
                 "alone cannot host IDE services: run the bridge with "
-                "THRIFT_CSPYSERVER_MODE=launcher (plus THRIFT_SERVICE_LAUNCHER_EXE), or "
-                "point it at an IarServiceLauncher/iaride backend. "
+                "--service-launcher --iar-stage <stage>, or point it at an "
+                "IarServiceLauncher/iaride backend. "
                 f"Services currently registered: {', '.join(sorted(present)) or '<none>'}."
             )
 
@@ -1516,6 +1516,7 @@ def thrift_connection_info() -> dict[str, Any]:
         "cspy_args": cfg.cspy_args,
         "cspy_start_timeout_ms": cfg.cspy_start_timeout_ms,
         "cspy_restart_on_failure": cfg.cspy_restart_on_failure,
+        "iar_stage": str(cfg.iar_stage) if cfg.iar_stage else None,
         "service_launcher_exe": (
             str(cfg.launcher_executable) if cfg.launcher_executable else None
         ),
@@ -1523,9 +1524,9 @@ def thrift_connection_info() -> dict[str, Any]:
         "ide_services": cfg.ide_services or sorted(IDE_SERVICES),
         "auto_ide_services": cfg.auto_ide_services,
     }
-    if cfg.cspy_mode in {"managed", "launcher"}:
+    if cfg.cspy_mode == "managed":
         info["managed_server"] = managed_server_status()
-    if cfg.cspy_mode == "launcher":
+    if cfg.launcher_executable is not None:
         info["service_launcher"] = launcher_status()
     return info
 
@@ -1611,9 +1612,9 @@ def debugger_session_status() -> dict[str, Any]:
         "core_states": None,
     }
 
-    if cfg.cspy_mode in {"managed", "launcher"}:
+    if cfg.cspy_mode == "managed":
         status["managed_server"] = managed_server_status()
-    if cfg.cspy_mode == "launcher":
+    if cfg.launcher_executable is not None:
         status["service_launcher"] = launcher_status()
 
     try:
@@ -2085,9 +2086,9 @@ def debugger_capabilities() -> dict[str, Any]:
         "errors": [],
     }
 
-    if cfg.cspy_mode in {"managed", "launcher"}:
+    if cfg.cspy_mode == "managed":
         out["managed_server"] = managed_server_status()
-    if cfg.cspy_mode == "launcher":
+    if cfg.launcher_executable is not None:
         out["service_launcher"] = launcher_status()
 
     try:
@@ -3431,6 +3432,7 @@ def ide_services_status() -> dict[str, Any]:
 
     data: dict[str, Any] = {
         "cspy_mode": cfg.cspy_mode,
+        "iar_stage": str(cfg.iar_stage) if cfg.iar_stage else None,
         "auto_ide_services": cfg.auto_ide_services,
         "configured_services": cfg.ide_services or sorted(IDE_SERVICES),
         "service_launcher_exe": (
