@@ -17,12 +17,16 @@ Licensed under the [MIT License](LICENSE).
 
 ## Getting started
 
+Install the server (it brings the `iar-cspy` API along) and point it at your
+IAR installation, the directory with `common/bin` under it:
+
 ```sh
-git clone https://github.com/iarsystems/cspy-mcp && cd cspy-mcp
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt          # the server, and iar-cspy from GitHub
-iar-cspy-mcp --iar-path /opt/iar/ewarm   # or: python -m iar_cspy_mcp
+pip install "iar-cspy-mcp @ git+https://github.com/iarsystems/cspy-mcp"
+iar-cspy-mcp --iar-path /opt/iar/ewarm       # or: python -m iar_cspy_mcp
 ```
+
+To pin a version, add `@<branch, tag or commit>` after the repository URL.
+Normally your MCP client starts the server for you; see below.
 
 ## Add it to your MCP client
 
