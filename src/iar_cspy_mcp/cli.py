@@ -36,7 +36,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Path to an IAR installation or build stage, i.e. the directory with "
-            "common/bin under it. The programs the bridge needs are taken from "
+            "common/bin under it. The programs the server needs are taken from "
             "there, so this is normally the only path you have to give."
         ),
     )

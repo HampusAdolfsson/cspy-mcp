@@ -1,6 +1,7 @@
-# AI Usability Roadmap
+# Open items
 
-This roadmap tracks major improvements to make the MCP server (and the `iar_cspy` API under it) easier and safer for AI agents to use.
+Planned improvements to the MCP server and the `iar_cspy` API under it, with a
+focus on making them easier and safer for AI agents to use.
 The `iar_cspy` API lives in https://github.com/iarsystems/cspy-py; items that
 need API or backend work are tracked in its TODO.md as well.
 
@@ -9,44 +10,13 @@ need API or backend work are tracked in its TODO.md as well.
 - [~] In progress
 - [x] Done
 
-## Major Bullet Points
+## Done: the first roadmap (items 1-12)
 
-1. [x] Add one happy-path orchestration tool
-- Add a first-class configure-and-start tool that enforces resolve -> configure -> start.
-- Return structured lifecycle state in one response.
-
-2. [x] Add a universal status tool
-- Return lifecycle flags, online state, core count/states, backend mode, and diagnostics hints.
-
-3. [x] Standardize tool response shape
-- Introduce a predictable envelope for success/error responses where practical.
-
-4. [x] Make tools idempotent where possible
-- Ensure repeated stop/ensure operations are safe and low-noise.
-
-5. [x] Promote common debugger_call operations to first-class tools
-- Prioritize thread list, cycle counter, eval expression, and similar high-frequency calls.
-
-6. [x] Add explicit wait tools
-- Add timeout-based wait operations for run-state transitions.
-
-7. [x] Improve error taxonomy
-- Add stable, machine-readable error categories/codes for recovery.
-
-8. [x] Include backend diagnostics for transport failures consistently
-- Ensure recent backend output is attached broadly on failures.
-
-9. [x] Add capability discovery
-- Expose backend/service capability summary and feature availability.
-
-10. [x] Provide AI-first workflow docs
-- Add compact canonical playbooks for common flows.
-
-11. [x] Keep live harness self-contained and easy to run
-- Preserve bundled assets and provide one-command validation guidance.
-
-12. [x] Add strict cleanup/reset tool
-- One tool to force teardown and return to a known-good baseline.
+A happy-path configure-and-start tool, a status tool, the response envelope,
+idempotent stop/ensure, first-class tools for common `debugger_call` uses,
+wait tools, the error taxonomy, backend diagnostics on failures, capability
+discovery, the playbooks, a self-contained live test harness, and the strict
+cleanup tool.
 
 ## Feedback from AI black-box usability test (2026-08-10, J-Link + sim on live E31 Arty)
 
@@ -84,10 +54,14 @@ New items, roughly in priority order:
   "TRUE", "")`. Consider first-class `debugger_run_to_ule` and a macro-based
   breakpoint fallback tool.
 
-15. [ ] Clarify the access_type enum
+15. [~] Clarify the access_type enum
 - Docstring says 1 = execute/fetch, but created breakpoints report
-  `accessType: 0` and the sim accepts both 0 and 1. Verify against
-  shared.AccessType and make the docstring, argument, and result consistent.
+  `accessType: 0` and the sim accepts both 0 and 1.
+- Verified: `shared.AccessType` is 1-4 (1 = kDkFetchAccess), and a fetch
+  breakpoint on the Cortex-M3 simulator reads back `accessType=0`. The docs
+  now say to pass 1-4 and not to rely on the value read back
+  (docs/backend-notes.md). Open: whether 0 is a backend bug, and what emulator
+  drivers report.
 
 16. [ ] Fix cycle counter signedness
 - `debugger_get_cycle_counter` returned -821365371 on hardware (i32 truncation

@@ -50,7 +50,7 @@ IAR_INSTALL_PATH="${1:-${IAR_INSTALL_PATH:-}}"
 [ "$#" -gt 0 ] && shift
 
 # Diagnostics go to stderr: on stdio, stdout carries the MCP protocol and
-# nothing else. The backends' own output is captured to log files by the bridge.
+# nothing else. The backends' own output is captured to log files by the server.
 if [ -z "$IAR_INSTALL_PATH" ]; then
   echo "Path to an IAR installation is required." >&2
   echo "Pass it as the first argument or set IAR_INSTALL_PATH." >&2

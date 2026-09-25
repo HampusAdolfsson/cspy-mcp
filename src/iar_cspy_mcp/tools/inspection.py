@@ -21,14 +21,14 @@ def contextmanager_get_stack(context_json: str = "", low: int = 0, high: int = 2
     service. Registers, eval and memory reads work regardless.
     """
     require_session("contextmanager_get_stack")
-    return to_plain(get_client().context.stack(int(low), int(high), context_from_json(context_json)))
+    return to_plain(get_client().context.stack(int(low), int(high), context=context_from_json(context_json)))
 
 
 @mcp.tool()
 def contextmanager_get_stack_depth(context_json: str = "", max_depth: int = 256) -> int:
     """Get stack depth for a context."""
     require_session("contextmanager_get_stack_depth")
-    return get_client().context.depth(int(max_depth), context_from_json(context_json))
+    return get_client().context.depth(int(max_depth), context=context_from_json(context_json))
 
 
 @mcp.tool()
@@ -40,29 +40,29 @@ def contextmanager_get_context_info(context_json: str = "") -> Any:
     service. Registers, eval and memory reads work regardless.
     """
     require_session("contextmanager_get_context_info")
-    return to_plain(get_client().context.info(context_from_json(context_json)))
+    return to_plain(get_client().context.info(context=context_from_json(context_json)))
 
 
 @mcp.tool()
 def contextmanager_get_locals(context_json: str = "") -> Any:
     """Get local symbols for a context reference."""
     require_session("contextmanager_get_locals")
-    return to_plain(get_client().context.locals(context_from_json(context_json)))
+    return to_plain(get_client().context.locals(context=context_from_json(context_json)))
 
 
 @mcp.tool()
 def contextmanager_get_parameters(context_json: str = "") -> Any:
     """Get function parameters for a context reference."""
     require_session("contextmanager_get_parameters")
-    return to_plain(get_client().context.parameters(context_from_json(context_json)))
+    return to_plain(get_client().context.parameters(context=context_from_json(context_json)))
 
 
 @mcp.tool()
 def symbols_list_visible(context_json: str = "") -> dict[str, Any]:
     """List visible local and parameter symbols in the selected context."""
     require_session("symbols_list_visible")
-    visible = get_client().context.visible_symbols(context_from_json(context_json))
-    return {**visible, "count": len(visible["all"])}
+    visible = get_client().context.visible_symbols(context=context_from_json(context_json))
+    return {**visible.to_dict(), "count": len(visible.all)}
 
 
 @mcp.tool()
@@ -73,7 +73,14 @@ def symbols_lookup(name: str, context_json: str = "", prefix: bool = False) -> d
     - Uses Debugger.evalExpression for exact value evaluation.
     """
     require_session("symbols_lookup")
-    return get_client().context.lookup(name, context_from_json(context_json), prefix=bool(prefix))
+    found = get_client().context.lookup(name, context=context_from_json(context_json), prefix=bool(prefix))
+    evaluations = [
+        {"name": symbol, "value": to_plain(found.values[symbol])}
+        if symbol in found.values
+        else {"name": symbol, "error": found.errors.get(symbol, "")}
+        for symbol in found.matches
+    ]
+    return {"query": found.query, "prefix": found.prefix, "matches": found.matches, "evaluations": evaluations}
 
 
 @mcp.tool()

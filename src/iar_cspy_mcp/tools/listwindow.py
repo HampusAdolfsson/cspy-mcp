@@ -23,7 +23,8 @@ def listwindow_list_services(name_filter: str = "listwindow") -> list[dict[str, 
 def listwindow_get_overview(service_name: str) -> dict[str, Any]:
     """Fetch list window metadata such as display name, columns, and row count."""
     require_session("listwindow_get_overview")
-    return get_client().listwindows.window(service_name).overview()
+    overview = get_client().listwindows.window(service_name).overview()
+    return {"service_name": service_name, **overview.to_dict()}
 
 
 @mcp.tool()
@@ -36,7 +37,16 @@ def listwindow_get_rows(service_name: str, first_row: int = 0, max_rows: int = 5
         max_rows: Maximum rows to fetch.
     """
     require_session("listwindow_get_rows")
-    return get_client().listwindows.window(service_name).rows(int(first_row), int(max_rows))
+    result = get_client().listwindows.window(service_name).rows(int(first_row), max(1, int(max_rows)))
+    return {
+        "service_name": service_name,
+        "is_sliding": result.is_sliding,
+        "chunk_info": result.chunk_info,
+        "row_count": result.row_count,
+        "first_row": result.first_row,
+        "returned": len(result.rows),
+        "rows": result.rows,
+    }
 
 
 @mcp.tool()
@@ -51,7 +61,8 @@ def listwindow_sliding_navigate(
     Useful for trace/list windows that report zero rows until a chunk has been requested.
     """
     require_session("listwindow_sliding_navigate")
-    return get_client().listwindows.window(service_name).navigate(float(fraction), int(chunk_pos), int(min_lines))
+    chunk = get_client().listwindows.window(service_name).navigate(float(fraction), int(chunk_pos), int(min_lines))
+    return {"service_name": service_name, **chunk.to_dict()}
 
 
 @mcp.tool()
@@ -71,7 +82,8 @@ def listwindow_get_notifications(clear: bool = False) -> dict[str, Any]:
 def listwindow_trace_status(service_name: str) -> dict[str, Any]:
     """Get trace-window capabilities and enablement state for a trace listwindow service."""
     require_session("listwindow_trace_status")
-    return get_client().listwindows.trace(service_name).status()
+    status = get_client().listwindows.trace(service_name).status()
+    return {"service_name": service_name, **status.to_dict()}
 
 
 @mcp.tool()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the bridge over HTTP against a Thrift-enabled IarIde (the IAR IDE).
+# Run the MCP server over HTTP against a Thrift-enabled IarIde (the IAR IDE).
 #
 #   ./run_iaride.sh <iar-path>
 #

@@ -32,7 +32,8 @@ Normally your MCP client starts the server for you; see below.
 
 All examples use managed mode: the server starts the backend itself from an
 IAR installation or build stage (the directory with `common/bin` under it).
-Adjust the path to your machine.
+Adjust the path to your machine. See [Backend modes](#backend-modes)
+for what managed and standalone mode do.
 
 **Claude Code**: `.mcp.json` in your project (or `~/.claude.json`), or
 `claude mcp add cspy-debugger -- iar-cspy-mcp --iar-path /opt/iar/ewarm`:
@@ -68,7 +69,7 @@ Adjust the path to your machine.
 If `iar-cspy-mcp` is not on the client's `PATH`, use the virtualenv's Python:
 `"command": "/abs/path/.venv/bin/python", "args": ["-m", "iar_cspy_mcp", ...]`.
 From a checkout without installing, `run_headless.sh <iar-path>` does the same
-over stdio (see [Helper scripts](#helper-scripts)).
+over stdio (see [Helper scripts](#helper-scripts-linuxmacos)).
 
 **An already-running backend** (standalone mode): replace `--iar-path` with
 its service registry:
@@ -79,22 +80,28 @@ its service registry:
 
 ## Requirements
 
-Python 3.10+, and either an IAR installation (the directory with `common/bin`
-under it; the backend is then started for you) or an already-running backend
-to connect to.
+Python 3.10+ on Linux or Windows, and either an IAR installation or an
+already-running backend to connect to. The installation is the directory with
+`common/bin` under it (for example IAR Embedded Workbench for Arm), and it
+needs to ship `CSpyServer2`; the backend is then started for you. The project
+and options tools also need `IarServiceLauncher`.
 
 ## Backend modes
 
-- **managed** (default): the server starts and supervises the backend from
-  `--iar-path` (or `IAR_INSTALL_PATH`). `IarServiceLauncher` owns the service
-  registry and hosts the IDE services, and `CSpyServer2` joins it with
-  `-registry <port>`, so the `project_*`/`options_*` tools work alongside the
-  debugger ones. An installation without the launcher runs CSpyServer2 alone,
-  as does `--no-ide-services`. Unhealthy processes are restarted.
-- **standalone**: `--registry-host`/`--registry-port` connect to a backend
-  someone else runs: a Thrift-enabled `iaride`, or a hand-started
-  `IarServiceLauncher`/`CSpyServer2`. The port is the service registry, not
-  the debugger itself.
+- **managed** (default): given an IAR installation (`--iar-path` or
+  `IAR_INSTALL_PATH`), the server starts `IarServiceLauncher`, which owns the
+  service registry and hosts the IDE services, and a `CSpyServer2` that joins
+  that registry with `-registry <port>`, so the `project_*`/`options_*` tools
+  work alongside the debugger ones. It supervises both and restarts them when
+  they fail. CSpyServer2 supports one debug session per process, so every
+  session gets a fresh one. Installations without the launcher, or
+  `--no-ide-services`, run CSpyServer2 alone, without the project and options
+  tools.
+- **standalone**: `--registry-host`/`--registry-port` (or
+  `THRIFT_REGISTRY_PORT`) connect to the registry of a backend someone else
+  runs, such as a Thrift-enabled `iaride` or a hand-started
+  CSpyServer2/IarServiceLauncher. The port is that of the service registry,
+  not of the debugger service itself. Nothing is started or stopped.
 
 See [docs/ide-services.md](docs/ide-services.md) for the IDE services, and
 the [backend notes](https://github.com/iarsystems/cspy-py/blob/main/docs/backend-notes.md)
@@ -110,19 +117,21 @@ for known backend behavior.
 | `--no-ide-services`, `--ide-services LIST` | Host no IDE services, or only `projectmanager`/`options`. |
 | `--registry-host HOST`, `--registry-port PORT` | Connect to a running backend (standalone mode). |
 | `--registry-service NAME` | Registry name of the debugger service (default `debugger`). |
-| `--web`, `--web-port PORT` | Serve MCP over streamable HTTP on 127.0.0.1 instead of stdio. |
+| `--web`, `--web-port PORT` | Serve MCP over streamable HTTP at `http://127.0.0.1:8000/mcp` (or `PORT`) instead of stdio. |
 | `--probe-cspyserver2` | Start the managed backend, print its registry, exit. |
 
 Every option also has an environment variable; see
 [`.env.example`](.env.example). `MCP_TRANSPORT=streamable-http`,
-`MCP_HOST` and `MCP_PORT` select the network transport without `--web`.
+`MCP_HOST` and `MCP_PORT` select the network transport without `--web`;
+`MCP_HOST=0.0.0.0` listens on all interfaces, which exposes the debugger to
+the network.
 
 On stdio the server logs every backend RPC to stderr (`[thrift] call ...`),
 which MCP hosts collect as server logs; stdout carries only the protocol.
 
-### Helper scripts
+### Helper scripts (Linux/macOS)
 
-Wrappers that run the server from a checkout without installing it. Each
+Bash wrappers that run the server from a checkout without installing it. Each
 takes the IAR path as its first argument or from `IAR_INSTALL_PATH`, and uses
 `.venv/bin/python3` when present.
 
@@ -133,7 +142,9 @@ takes the IAR path as its first argument or from `IAR_INSTALL_PATH`, and uses
 | `run_iaride.sh <iar-path>` | HTTP on `MCP_PORT` | standalone: starts IarIde and uses its registry |
 
 `NO_IDE_SERVICES=1` and `THRIFT_IDE_SERVICES=projectmanager` restrict what
-the managed backend hosts.
+the managed backend hosts. On Windows, run `iar-cspy-mcp` (or
+`python -m iar_cspy_mcp`) directly; `scripts/run_validation.ps1 -IarPath <path>`
+runs the unit and live tests.
 
 ## Tools
 
@@ -154,7 +165,11 @@ the managed backend hosts.
 | Raw RPC | `debugger_call`, `projectmanager_call`, `options_call` |
 
 Each tool's description (what the MCP client shows the model) documents its
-arguments.
+arguments. The raw RPC tools take `args_json`: a JSON array for positional
+arguments (`"[123, \"abc\"]"`), an object for keyword arguments, with
+structs as objects and enums by name. Headless backends may not publish
+instruction trace list windows; `listwindow_list_services("")` shows what is
+registered before you read rows.
 
 ### Response envelope and errors
 
@@ -239,8 +254,9 @@ examples/
   firmware/          Cortex-M3 simulator program + launch.json used by the live tests
   mcp/               MCP client configs and a stdio protocol client
 docs/                IDE services
+scripts/             run_validation.ps1: unit and live tests on Windows
 mcp_thrift_server/   deprecated shim for the server's old module name (see below)
-run_headless.sh, run_web.sh, run_iaride.sh   start the server from a checkout
+run_headless.sh, run_web.sh, run_iaride.sh   start the server from a checkout (Linux/macOS)
 ```
 
 ## Development

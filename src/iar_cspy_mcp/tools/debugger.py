@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from iar_cspy import to_plain
+from iar_cspy import StopResult, to_plain
 from iar_cspy.debugger import PRE_SESSION_METHODS
 from iar_cspy.errors import DC_RESULTS, ERROR_CODES, FOCUSED_DC_RESULTS, error_entry
 from iar_cspy.ide_services import IDE_SERVICES
@@ -13,26 +13,15 @@ from .._app import envelope, get_client, mcp, require_session
 from ._args import call_with_json_args, context_from_json
 
 
-def _process_status() -> dict[str, Any]:
-    """managed_server / service_launcher entries, as the status tools report them."""
-    processes = get_client().backend.status()
-    out: dict[str, Any] = {}
-    if "debugger" in processes:
-        out["managed_server"] = {"mode": "managed", **processes["debugger"]}
-    if "service_launcher" in processes:
-        out["service_launcher"] = processes["service_launcher"]
-    return out
-
-
 @mcp.tool()
 def thrift_connection_info() -> dict[str, Any]:
-    """Return active bridge connection settings.
+    """Return active server connection settings.
 
     Returns:
         Dictionary with host/port defaults, timeout, thrift file path, and include dirs.
 
     Notes:
-        This reports local bridge configuration only and does not verify that backend
+        This reports local server configuration only and does not verify that backend
         services are reachable.
     """
     client = get_client()
@@ -58,7 +47,7 @@ def thrift_connection_info() -> dict[str, Any]:
         "ide_services": list(cfg.ide_services) or sorted(IDE_SERVICES),
         "auto_ide_services": cfg.auto_ide_services,
     }
-    info.update(_process_status())
+    info.update(client.backend.process_status())
     return info
 
 
@@ -218,40 +207,7 @@ def debugger_configure_and_start_session(launch_json: str) -> dict[str, Any]:
 @mcp.tool()
 def debugger_capabilities() -> dict[str, Any]:
     """Return a compact capability snapshot for the current backend/session."""
-    client = get_client()
-    state = client.debugger.state
-    out: dict[str, Any] = {
-        "backend_mode": client.backend.mode,
-        "session": state,
-        "backend_online": None,
-        "core_count": None,
-        "debugger_methods": [],
-        "services": [],
-        "errors": [],
-    }
-    out.update(_process_status())
-
-    def probe(message: str, fn: Any) -> Any:
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001
-            out["errors"].append(
-                error_entry(
-                    code="CAPABILITY_CHECK_FAILED",
-                    category="discovery",
-                    message=message,
-                    retryable=True,
-                    details=client.classify_error(exc),
-                )
-            )
-            return None
-
-    out["backend_online"] = probe("isOnline failed", client.debugger.is_online)
-    out["debugger_methods"] = probe("debugger_list_methods failed", debugger_list_methods) or []
-    if state["started"]:
-        out["core_count"] = probe("getNumberOfCores failed", client.debugger.core_count)
-        out["services"] = probe("list services failed", client.registry.services) or []
-    return envelope(ok=True, tool="debugger_capabilities", data=out)
+    return envelope(ok=True, tool="debugger_capabilities", data=get_client().capabilities())
 
 
 @mcp.tool()
@@ -394,7 +350,7 @@ def debugger_step_over() -> dict[str, Any]:
         Session is configured/started and target is halted.
     """
     require_session("debugger_step_over")
-    get_client().debugger.step_over()
+    get_client().debugger.step_over(wait=False)
     return {"ok": True}
 
 
@@ -422,11 +378,12 @@ def debugger_eval_expression(
     """Evaluate an expression in context via Debugger.evalExpression().
 
     format is an ExprFormat: 0 = default, 1 = bin, 2 = oct, 3 = dec, 4 = hex,
-    5 = char, 6 = str, 7 = no custom.
+    5 = char, 6 = str, 7 = no custom. dereference is passed as evalExpression's
+    "prefix" flag: it adds the format's prefix (such as 0x) to the value text.
     """
     require_session("debugger_eval_expression")
     value = get_client().debugger.eval(
-        expression, context_from_json(context_json), format=int(format), dereference=bool(dereference)
+        expression, context=context_from_json(context_json), format=int(format), prefix=bool(dereference)
     )
     return to_plain(value)
 
@@ -574,18 +531,12 @@ def debugger_call(method: str, args_json: str = "[]") -> Any:
     if method not in PRE_SESSION_METHODS:
         require_session(f"debugger_call({method})")
 
-    debugger = get_client().debugger
-    try:
-        result = call_with_json_args(debugger.call, method, args_json)
-    except Exception as exc:
-        if method == "stopSession":
-            benign, details = debugger.benign_stop_error(exc)
-            if benign:
-                return {
-                    "ok": True,
-                    "already_stopped": True,
-                    "stop_idempotent_recovered": True,
-                    "stop_idempotent_details": details,
-                }
-        raise
+    result = call_with_json_args(get_client().debugger.call, method, args_json)
+    if isinstance(result, StopResult):  # stopSession failed only because it was already stopped
+        return {
+            "ok": True,
+            "already_stopped": True,
+            "stop_idempotent_recovered": True,
+            "stop_idempotent_details": result.stop_idempotent_details,
+        }
     return to_plain(result)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from iar_cspy import CSpyError, to_plain
+from iar_cspy.errors import with_context
 
 from .._app import get_client, mcp, require_session
 
@@ -36,7 +37,7 @@ def breakpoints_set_from_descriptor(descriptor: str) -> Any:
     try:
         return to_plain(get_client().breakpoints.restore(descriptor))
     except CSpyError as exc:
-        raise CSpyError(f"{exc} Take descriptors from breakpoints_get_all().") from exc
+        raise with_context(exc, f"{exc} Take descriptors from breakpoints_get_all().") from exc
 
 
 @mcp.tool()
@@ -51,6 +52,7 @@ def breakpoints_set_on_ule(ule: str, access_type: int = 1) -> Any:
         2 = read watchpoint
         3 = write watchpoint
         4 = read/write watchpoint
+    The created breakpoint may report accessType 0; do not rely on that field.
 
     ULE parsing uses the debugger Universal Location Expression parser
     (DkUle::ParseUleString with code-context parsing). In practice this accepts:

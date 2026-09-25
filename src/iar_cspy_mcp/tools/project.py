@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from iar_cspy import CSpyError, to_plain
-from iar_cspy.errors import error_entry
+from iar_cspy import CSpyError, ProjectStatus, to_plain
+from iar_cspy.errors import error_entry, with_context
 from iar_cspy.ide_services import normalize_service_keys
 from iar_cspy.types import BuildResult
 
@@ -19,8 +19,21 @@ from ._args import call_with_json_args
 
 def _no_project_hint(exc: CSpyError) -> CSpyError:
     if "No current project" in str(exc):
-        return CSpyError(f"{exc} Use project_load_workspace(file_path).")
+        return with_context(exc, f"{exc} Use project_load_workspace(file_path).")
     return exc
+
+
+def _status_data(status: ProjectStatus) -> dict[str, Any]:
+    projects = []
+    for info in status.projects:
+        entry: dict[str, Any] = {"project": info.project}
+        for key in ("configurations", "current_configuration"):
+            if key in info.errors:
+                entry[f"{key}_error"] = info.errors[key]
+            else:
+                entry[key] = getattr(info, key)
+        projects.append(entry)
+    return {"has_workspace": status.has_workspace, "current_project": status.current_project, "projects": projects}
 
 
 def resolve_project(project_path: str, config_name: str) -> tuple[dict[str, Any], str]:
@@ -65,7 +78,9 @@ def project_load_workspace(file_path: str, fetch_dependency_data: bool = True) -
         Overview of loaded projects and their build configurations.
     """
     return envelope(
-        ok=True, tool="project_status", data=get_client().project.load(file_path, bool(fetch_dependency_data))
+        ok=True,
+        tool="project_status",
+        data=_status_data(get_client().project.load(file_path, bool(fetch_dependency_data))),
     )
 
 
@@ -77,7 +92,7 @@ def project_status() -> dict[str, Any]:
         Envelope whose data contains has_workspace, the loaded projects, and for
         each project its build configurations plus the current configuration.
     """
-    return envelope(ok=True, tool="project_status", data=get_client().project.status())
+    return envelope(ok=True, tool="project_status", data=_status_data(get_client().project.status()))
 
 
 @mcp.tool()
@@ -287,7 +302,7 @@ def ide_services_ensure(services: str = "", force: bool = False) -> dict[str, An
 
 @mcp.tool()
 def ide_services_stop_launcher() -> dict[str, Any]:
-    """Stop the IarServiceLauncher this bridge started, if any.
+    """Stop the IarServiceLauncher this server started, if any.
 
     Only affects a launcher owned by this process (managed mode); an
     externally started launcher or iaride is left alone. Note that in managed

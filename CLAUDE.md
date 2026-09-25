@@ -21,7 +21,9 @@ repository only turns it into MCP tools. The dependency goes one way only:
 
 `tests/`: tool tests against `iar_cspy.testing.fake_client()` (`FakeRpc`),
 and `test_live.py` against a real backend. The `cspy_client`/`cspy_session`
-fixtures and `--cspy-*` options come from `iar_cspy.pytest_plugin`.
+fixtures, `--cspy-*` options and the `live` marker come from
+`iar_cspy.pytest_plugin`, which registers itself through a `pytest11` entry
+point wherever `iar-cspy` is installed.
 
 Also: `mcp_thrift_server/` is a deprecated shim so old `python -m mcp_thrift_server`
 configs keep working. `examples/firmware/` is the simulator program + launch.json
@@ -58,9 +60,14 @@ Important behavior:
 - The registry endpoint is not the debugger endpoint itself.
 - The event handler and libsupport services are hosted by this process and
   registered on configure/start.
-- One session per CSpyServer2 process: managed mode restarts it on stop.
-- `go_and_wait`/`run_to` wait for the backend's target-stopped event.
-  `runToULE` returns early, and the core reads "stopped" before it starts.
+- One session per CSpyServer2 process: managed mode restarts it on stop. A
+  replaced CSpyServer2 (`Backend.debugger_generation`) ends the session:
+  `Client.call` raises `SessionError` for calls that needed it.
+- Session-dependent API methods raise `SessionError` without a started
+  session; `debugger.attach()` adopts one another frontend started.
+- `go_and_wait`/`run_to`/the steps wait for a target-started then a
+  target-stopped event after the action. `runToULE` returns early, and the
+  core reads "stopped" before it starts.
 
 ## Breakpoint API Guidance (Important)
 `breakpoints_set_on_ule(ule, access_type)` / `client.breakpoints.add(ule, access)`
@@ -108,3 +115,8 @@ confuses pytest's rootdir detection.
   there; this repository gets the tool change and a test pinning what MCP
   clients see.
 - Treat descriptor inputs as opaque round-trip values only.
+- When re-raising an error with more context, use `errors.with_context(exc,
+  message)` so the class (`BackendError`, ...) and the backend result code
+  survive for `except` clauses and `classify()`.
+- API results are dataclasses in `iar_cspy.types`; the MCP tools shape them
+  into their JSON. Check MCP output stays identical when changing an API result.

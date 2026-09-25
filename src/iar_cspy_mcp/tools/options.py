@@ -56,9 +56,10 @@ def options_create_session(
         )
     except ProjectNotLoaded as exc:
         message = str(exc.__cause__ or exc)
-        raise CSpyError(
+        raise ProjectNotLoaded(
             f"{message}. Load it into the project manager first with "
-            f'project_load_workspace("{exc.project_path}").'
+            f'project_load_workspace("{exc.project_path}").',
+            exc.project_path,
         ) from exc
     return envelope(
         ok=True,
