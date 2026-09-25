@@ -83,7 +83,11 @@ is the primary way to create breakpoints and watchpoints.
 ## Known Backend Issues
 See `docs/backend-notes.md` in cspy-py. In short:
 - Connection resets (`WinError 10054`) and the backend exiting around
-  configure/start/stopSession; stopSession can assert in `-standalone -sockets` mode.
+  configure/start/stopSession; stopSession can assert in `-standalone -sockets` mode
+  (managed mode ends sessions with `Debugger.exit()` instead, as cspy.thrift says).
+- Multicore sessions need `--multicore_nr_of_cores=N` on the CSpyServer2 command
+  line too (managed mode adds it).
+- Target stdin reads wait for `libsupport_push_input`, as at a console.
 - Headless: `ContextManager.getStack`/`getContextInfo` fail with "No such
   service: frontend" (no IDE frontend).
 - Flash loading and license (`kDcLicenseViolation`) failures during start.

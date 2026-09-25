@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 
 import pytest
 
@@ -35,6 +36,7 @@ def test_tool_inventory(server):
         "debugger_get_number_of_cores", "debugger_get_core_state", "debugger_session_status",
         "debugger_configure_session", "debugger_start_smp_session", "debugger_configure_and_start_session",
         "libsupport_get_output", "libsupport_clear_output", "libsupport_push_input",
+        "libsupport_wait_for_input_request",
         "libsupport_request_input_binary", "libsupport_request_input", "listwindow_list_services",
         "listwindow_get_overview", "listwindow_get_rows", "listwindow_sliding_navigate",
         "listwindow_get_notifications", "listwindow_trace_status", "listwindow_trace_set_enabled",
@@ -165,6 +167,19 @@ def test_stop_session_when_already_stopped(server, fake):
     assert out["tool"] == "debugger_stop_session"
     assert out["data"] == {"ok": True, "already_stopped": True, "managed_backend_restarted_on_next_start": False}
     assert rpc.calls == []
+
+
+def test_stop_session_in_managed_mode_exits_the_backend(server, monkeypatch):
+    client, rpc = fake_client(Config(mode="managed"), started=True)
+    monkeypatch.setattr(client.backend, "restart_debugger", lambda: None)
+    server.set_client(client)
+    try:
+        out = server.debugger_stop_session()
+    finally:
+        server.set_client(None)
+        client.close()
+    assert out["data"] == {"ok": True, "managed_backend_restarted_on_next_start": True}
+    assert "stopSession" not in rpc.methods()  # Debugger.exit() on the process ends it
 
 
 def test_stop_session_idempotent_recovery(server, fake):
@@ -404,6 +419,20 @@ def test_libsupport_tools(server, fake):
     assert (out["text"], out["text_len"], out["bytes_len"]) == ("llo", 5, 5)
     assert server.libsupport_get_output()["text_len"] == 0
     assert server.libsupport_clear_output() == {"ok": True}
+
+
+def test_libsupport_waiting_for_input(server, fake):
+    client, _ = fake
+    assert server.libsupport_get_output()["waiting_for_input"] is False
+    assert server.libsupport_wait_for_input_request(timeout_ms=10) == {"waiting_for_input": False}
+
+    reader = threading.Thread(target=client.terminal.server.handler.requestInputBinary, args=(1,))
+    reader.start()  # the target reading stdin with nothing queued
+    assert server.libsupport_wait_for_input_request(timeout_ms=5000) == {"waiting_for_input": True}
+    assert server.libsupport_get_output()["waiting_for_input"] is True
+    server.libsupport_push_input("y")
+    reader.join(5)
+    assert not reader.is_alive() and server.libsupport_get_output()["waiting_for_input"] is False
 
 
 def test_listwindow_tools(server, fake, monkeypatch):

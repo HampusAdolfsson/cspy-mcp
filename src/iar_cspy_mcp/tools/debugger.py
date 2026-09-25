@@ -128,6 +128,12 @@ def debugger_configure_session(launch_json: str) -> dict[str, Any]:
         certain lifecycle states; use the explicit debugger_stop_session() tool
         only when you intentionally want to terminate the active session.
 
+    Multicore:
+        With "--multicore_nr_of_cores=N" (N > 1) in driverOptions, CSpyServer2
+        needs the core count on its command line too. A managed backend is
+        restarted with it before configuring; against a standalone backend,
+        the error says what is missing.
+
     Args:
         launch_json: JSON object string for a single launch configuration: one
             entry of a C-SPY VS Code launch.json. A whole launch.json with
@@ -212,15 +218,23 @@ def debugger_capabilities() -> dict[str, Any]:
 
 @mcp.tool()
 def debugger_stop_session() -> dict[str, Any]:
-    """Stop active debug session via Debugger.stopSession().
+    """Stop the active debug session.
 
     Returns:
         {"ok": True} on success.
 
     Managed-mode behavior:
-    - Also shuts down the managed CSpyServer2 process so the next startup uses
-      a fresh backend process.
+    - Asks the managed CSpyServer2 process to exit via Debugger.exit(), which
+      ends the session (stopSession() is deprecated for clients and is not
+      called), so the next startup uses a fresh backend process.
     - No backend session/runtime state is expected to carry over after this call.
+
+    Standalone-mode behavior:
+    - Stops the session via Debugger.stopSession(); a DkStop "failed to
+      suspend" error on an already halted target counts as success
+      (stop_idempotent_recovered).
+    - A target stdin read that is waiting for input is answered with
+      end-of-file first.
     """
     result = get_client().debugger.stop_session()
     out: dict[str, Any] = {"ok": True}
@@ -311,6 +325,9 @@ def debugger_stop() -> dict[str, Any]:
 
     Returns:
         {"ok": True} on success.
+
+    A target stdin read that is waiting for input stays pending: input pushed
+    later (libsupport_push_input) still reaches it once the target runs again.
     """
     require_session("debugger_stop")
     get_client().debugger.halt()
@@ -435,7 +452,13 @@ def debugger_go_and_wait_for_core_state(
     timeout_ms: int = 5000,
     poll_interval_ms: int = 50,
 ) -> dict[str, Any]:
-    """Start execution and wait for a desired core state (for example halted=0)."""
+    """Start execution and wait for a desired core state (for example halted=0).
+
+    When waiting for a halt, the wait also covers the backend moving its
+    inspection context to the stop location (at most 0.5 s more), so values
+    read afterwards are current. A fatal backend error ends the wait at once
+    and fails the tool with a SessionError: start a new session.
+    """
     require_session("debugger_go_and_wait_for_core_state")
     return _wait("debugger_go_and_wait_for_core_state", True, desired_state, core, timeout_ms, poll_interval_ms)
 

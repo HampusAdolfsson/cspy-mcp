@@ -156,7 +156,7 @@ runs the unit and live tests.
 | Breakpoints | `breakpoints_set_on_ule`, `breakpoints_set_on_ule_with_category`, `breakpoints_set_from_descriptor`, `breakpoints_get_all`, `breakpoints_get`, `breakpoints_enable`, `breakpoints_remove`, `breakpoints_recently_hit` |
 | Stack and symbols | `contextmanager_get_stack`, `contextmanager_get_stack_depth`, `contextmanager_get_context_info`, `contextmanager_get_locals`, `contextmanager_get_parameters`, `symbols_list_visible`, `symbols_lookup` |
 | Memory and code | `memory_read`, `memory_write_hex`, `disassembly_disassemble_range`, `sourcelookup_get_source_ranges` |
-| Terminal I/O | `libsupport_get_output`, `libsupport_clear_output`, `libsupport_push_input`, `libsupport_request_input`, `libsupport_request_input_binary` |
+| Terminal I/O | `libsupport_get_output`, `libsupport_clear_output`, `libsupport_push_input`, `libsupport_wait_for_input_request`, `libsupport_request_input`, `libsupport_request_input_binary` |
 | List windows | `listwindow_list_services`, `listwindow_get_overview`, `listwindow_get_rows`, `listwindow_sliding_navigate`, `listwindow_get_notifications`, `listwindow_trace_status`, `listwindow_trace_set_enabled`, `listwindow_trace_clear` |
 | Projects | `project_load_workspace`, `project_status`, `project_get_files`, `project_build`, `project_get_launch_config`, `project_configure_and_start_debug` |
 | Options | `options_create_session`, `options_get_category_tree`, `options_get_option_tree`, `options_update_state`, `options_commit`, `options_destroy_session` |
