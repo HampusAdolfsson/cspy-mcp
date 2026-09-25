@@ -1,16 +1,17 @@
+"""Repository-wide test setup: the live tests default to the bundled firmware."""
+
 from __future__ import annotations
 
+from pathlib import Path
 
-def pytest_addoption(parser):
-    parser.addoption(
-        "--cspyserver2",
-        action="store",
-        default="",
-        help="Absolute path to CSpyServer2 executable for live tests.",
-    )
-    parser.addoption(
-        "--launch-json",
-        action="store",
-        default="",
-        help="Optional launch.json path override for live tests.",
-    )
+import pytest
+
+from iar_cspy import LaunchConfig
+
+BUNDLED_LAUNCH = Path(__file__).resolve().parent / "examples" / "firmware" / "launch.json"
+
+
+@pytest.fixture
+def cspy_launch(pytestconfig) -> LaunchConfig:
+    """--cspy-launch, or the bundled Cortex-M3 simulator firmware."""
+    return LaunchConfig.from_file(pytestconfig.getoption("--cspy-launch") or BUNDLED_LAUNCH)

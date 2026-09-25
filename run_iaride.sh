@@ -4,7 +4,7 @@
 #   ./run_iaride.sh <iar-path>
 #
 # <iar-path> is an IAR installation or build stage, i.e. the directory with
-# under it. iaride is taken from <iar-path>/common/bin.
+# common/bin under it. iaride is taken from <iar-path>/common/bin.
 #
 # Env vars:
 #   IAR_INSTALL_PATH  the installation, if not given as an argument
@@ -18,6 +18,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run the server from the checkout without installing it. Its dependencies,
+# including iar-cspy (https://github.com/iarsystems/cspy-py), must be installed,
+# e.g. into .venv with `pip install -r requirements.txt`.
+export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 cd "$SCRIPT_DIR"
 
 PYTHON="$SCRIPT_DIR/.venv/bin/python3"
@@ -41,7 +45,7 @@ if [ ! -x "$IARIDE" ]; then
   exit 1
 fi
 
-# Unlike run_web.sh (which lets mcp_thrift_server spawn and manage CSpyServer2
+# Unlike run_web.sh (which lets iar_cspy_mcp spawn and manage CSpyServer2
 # itself), IarIde is a long-lived GUI app, so we start it here and discover its
 # service registry the same way any external tool would: IarIde writes its
 # registry location to CSpyServer2-ServiceRegistry.txt in its current working
@@ -89,6 +93,6 @@ export THRIFT_REGISTRY_PORT="$REGISTRY_PORT"
 
 # Not exec'd (unlike run_web.sh): we need to stay alive after the server exits
 # so the EXIT trap above can shut IarIde down too.
-"$PYTHON" -m mcp_thrift_server \
+"$PYTHON" -m iar_cspy_mcp \
   --web \
   --web-port "$WEB_PORT"

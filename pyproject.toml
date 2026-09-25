@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iar-cspy-mcp"
+version = "0.1.0"
+description = "MCP server exposing the IAR C-SPY debugger to AI assistants, built on iar-cspy"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    # Not on PyPI: https://github.com/iarsystems/cspy-py
+    "iar-cspy @ git+https://github.com/iarsystems/cspy-py.git",
+    # The server uses the FastMCP API of the 1.x SDK.
+    "mcp>=1.12.0,<2.0.0",
+]
+
+[project.scripts]
+iar-cspy-mcp = "iar_cspy_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

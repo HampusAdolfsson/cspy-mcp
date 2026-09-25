@@ -1,6 +1,8 @@
 # AI Usability Roadmap
 
-This roadmap tracks major improvements to make the MCP server easier and safer for AI agents to use.
+This roadmap tracks major improvements to make the MCP server (and the `iar_cspy` API under it) easier and safer for AI agents to use.
+The `iar_cspy` API lives in https://github.com/iarsystems/cspy-py; items that
+need API or backend work are tracked in its TODO.md as well.
 
 ## Status Legend
 - [ ] Not started
@@ -55,7 +57,7 @@ and libsupport stdout capture working without any plugin configuration.
 
 New items, roughly in priority order:
 
-13. [ ] Document the launch_json schema on the tool surface
+13. [~] Document the launch_json schema on the tool surface
 - `debugger_configure_and_start_session` / `debugger_configure_session` accept a
   `launch_json` string but nothing describes its shape. The agent had to learn it
   from a stray example file plus the backend error "Missing JSON member: name".
@@ -66,6 +68,10 @@ New items, roughly in priority order:
   docstring or a schema-discovery tool.
 - The IAR tooling already ships a formal launch.json schema (used by the
   VS Code debug extension). Reference or embed it.
+- Done: the configure tools' descriptions now show the shape and a minimal
+  simulator example, and a whole launch.json (`configurations` wrapper) is
+  accepted, using its first entry. Still open: a hardware example and a
+  reference to the extension's formal schema.
 
 14. [ ] Breakpoint tools are effectively sim-only against emulator drivers
 - Root cause is two known backend bugs in breakpoint category handling
@@ -106,13 +112,29 @@ New items, roughly in priority order:
   `runToULE(stopOnSymbol, True)` after start when the field is present, and
   reports the outcome via `stopOnSymbol`/`ranToSymbol`/`stopOnSymbolError` in
   the response. Verified on a Cortex-M3 Simulator session.
+- `runToULE` returns before the target has arrived, so `ranToSymbol` is now
+  only reported once the target-stopped event has come in (see
+  `Debugger.run_to` in iar_cspy).
 
-19. [ ] Add zone discovery
+19. [~] Add zone discovery
 - `memory_read`/`memory_write_hex`/`disassemble_range` require a `zone_id` but
   there is no tool to list zones (agent guessed 0 = Memory, which worked).
   Promote `getAllZones` to a first-class tool or document common zone ids
   (incl. the CSR zone for RISC-V).
+- Partly done: the Python API has `client.debugger.zones()`, and the
+  `memory_read` description points at `debugger_call("getAllZones")`. No
+  first-class MCP tool yet.
 
-20. [ ] Document core state values
+20. [x] Document core state values
 - Wait tools say "for example halted=0" but there is no enum reference.
   A one-line table (0=halted, ...) in the docstrings would remove guesswork.
+- Done: the core-state tools list 0 = stopped, 1 = running, 2 = sleeping,
+  3 = unknown, 4 = no power; the API has `iar_cspy.CoreState`.
+
+21. [ ] Host a headless `frontend` service
+- Without an IDE, `getStack`, `getContextInfo`, source lookup and disassembly
+  at the PC fail with "No such service, serviceName=frontend": the backend calls
+  back into the IDE's UI service (`frontend.thrift`: message boxes, file
+  dialogs). A stand-in hosted like the event handler would likely unblock them,
+  but it has to answer the backend's prompts on the user's behalf, so decide
+  on a policy first (e.g. default answer + log every prompt).

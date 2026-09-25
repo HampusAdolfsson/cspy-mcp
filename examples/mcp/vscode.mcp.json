@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "cspy-debugger": {
+      "type": "stdio",
+      "command": "iar-cspy-mcp",
+      "args": ["--iar-path", "C:\\iar\\ewarm-9.60"]
+    }
+  }
+}

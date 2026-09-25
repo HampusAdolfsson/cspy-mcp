@@ -22,17 +22,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install dependencies
+      - name: Install the server (editable, with iar-cspy) and test tools
         run: pip install -r requirements-dev.txt
 
       - name: Validate Python sources
-        run: python -m compileall -q mcp_thrift_server examples scripts tests
+        run: python -m compileall -q src tests examples mcp_thrift_server conftest.py
 
       - name: Run unit tests
-        run: >
-          pytest -q tests/test_server_tools_unit.py
-          tests/test_coerce_args_unit.py tests/test_projectmanager_tools_unit.py
-          tests/test_ide_services_unit.py
+        run: pytest -q -m "not live"
+
+      - name: Build the distribution
+        run: |
+          pip install build
+          python -m build --outdir dist .
 
   live-sim:
     name: Live simulator tests (cxarm)
@@ -53,7 +55,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install the server (editable, with iar-cspy) and test tools
         run: pip install -r requirements-dev.txt
 
       - name: Cache cxarm toolchain
@@ -85,18 +87,12 @@ jobs:
           echo "path=$CSPY" >> "$GITHUB_OUTPUT"
           "$CSPY" --version || true
 
-      - name: Run live simulator tests (runs bundled test.out ELF)
+      - name: Run live tests (MCP server, bundled test.out ELF)
         timeout-minutes: 10
         run: >
-          pytest -q --runxfail -m live tests
+          pytest -q -m live
           --timeout=240 --timeout-method=thread
-          --cspyserver2 "${{ steps.cspy.outputs.path }}"
-
-      - name: Run end-to-end demo against bundled ELF
-        timeout-minutes: 5
-        env:
-          THRIFT_CSPYSERVER_EXE: ${{ steps.cspy.outputs.path }}
-        run: python examples/run_live_demo.py
+          --cspy-cspyserver2="${{ steps.cspy.outputs.path }}"
 
       - name: Show CSpyServer2 logs on failure
         if: failure()

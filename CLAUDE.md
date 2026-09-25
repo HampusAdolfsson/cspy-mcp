@@ -1,156 +1,110 @@
 # CLAUDE.md
 
 ## Project Summary
-This repository hosts a Python MCP server that bridges to IAR C-SPY Thrift services.
+This repository is `iar-cspy-mcp` (import `iar_cspy_mcp`), an MCP server that
+exposes the IAR C-SPY debugger (and the Embedded Workbench
+ProjectManager/OptionsService) to AI assistants as tools.
 
-Core goal:
-- Expose C-SPY debugger/service operations as MCP tools for AI assistants.
-
-Current state:
-- Working MCP server implementation with registry-aware service resolution.
-- Supports stdio (default) and streamable-http MCP transports.
-- Includes auto-registration of a debug event handler service.
-- Expanded service coverage: debugger, breakpoints, contextmanager, memory, disassembly, sourcelookup, symbols.
+It is a thin adapter over the `iar-cspy` Python API (import `iar_cspy`), which
+lives in its own repository: https://github.com/iarsystems/cspy-py, usually
+checked out next to this one as `../cspy-py`. `iar_cspy` starts or connects to
+the backend, makes the Thrift calls and holds all backend behavior; this
+repository only turns it into MCP tools. The dependency goes one way only:
+`iar_cspy` never imports `mcp` or `iar_cspy_mcp`.
 
 ## Key Files
-- `mcp_thrift_server/server.py`: MCP tool definitions and orchestration.
-- `mcp_thrift_server/thrift_client.py`: Thrift loading, registry resolution, clients, serialization.
-- `mcp_thrift_server/config.py`: Environment-driven configuration model.
-- `mcp_thrift_server/__main__.py`: Entrypoint and transport selection.
-- `README.md`: Setup, env vars, usage, VS Code MCP integration.
-- `requirements.txt`: Runtime dependencies (`mcp<2.0.0`, `thriftpy2`).
+`src/iar_cspy_mcp/`:
+- `_app.py`: the FastMCP app, the server's one `Client`, the session guard, the envelope.
+- `tools/*.py`: MCP tools, one module per area. Keep them thin: parse JSON
+  args, call the API, shape the result.
+- `server.py`: imports all tool modules. `cli.py`: arguments, transports, signal handling.
+
+`tests/`: tool tests against `iar_cspy.testing.fake_client()` (`FakeRpc`),
+and `test_live.py` against a real backend. The `cspy_client`/`cspy_session`
+fixtures and `--cspy-*` options come from `iar_cspy.pytest_plugin`.
+
+Also: `mcp_thrift_server/` is a deprecated shim so old `python -m mcp_thrift_server`
+configs keep working. `examples/firmware/` is the simulator program + launch.json
+used by the live tests. `docs/ide-services.md` covers the project and options
+tools; the API guide, the hosting guide and the backend notes are in cspy-py.
 
 ## Dependency and Compatibility Notes
-- `mcp` must stay below 2.0.0 because current server uses `FastMCP` import path/API.
-- `thriftpy2` is used for dynamic loading of `cspy.thrift` and dependent IDL files.
+- `mcp` must stay below 2.0.0 because the server uses the `FastMCP` API.
+- `iar-cspy` is a direct git dependency (`pyproject.toml`), not on PyPI. To
+  change both at once, `pip install -e ../cspy-py` into the same environment,
+  after installing this package: pip fetches the git dependency again on
+  every install of this one, replacing the local checkout.
+- MCP tool names, arguments and result shapes are a public contract for AI
+  callers: change them deliberately, not as a side effect of API changes.
 
 ## Environment Contract
-Common required env vars:
-- `THRIFT_FILE`: Absolute path to `cspy.thrift`.
-- `THRIFT_INCLUDE_DIRS`: Semicolon-separated include paths containing dependent thrift IDLs (for example `shared.thrift`).
-- `THRIFT_REGISTRY_HOST`: Service Registry host.
-- `THRIFT_REGISTRY_PORT`: Service Registry port.
-
-Useful optional env vars:
-- `MCP_TRANSPORT=stdio|streamable-http`
-- `MCP_HOST`, `MCP_PORT`, `MCP_PATH` for network mode.
+Everything has defaults; the IDL is bundled. The usual inputs:
+- `IAR_INSTALL_PATH` / `--iar-path`: IAR installation (managed mode, default).
+- `THRIFT_REGISTRY_HOST` / `THRIFT_REGISTRY_PORT` (+ `THRIFT_CSPYSERVER_MODE=standalone`):
+  connect to a running backend.
+- `MCP_TRANSPORT=stdio|streamable-http`, `MCP_HOST`, `MCP_PORT` for the server.
+See `.env.example` for the rest.
 
 ## Runtime Architecture
-1. MCP tool call enters `server.py`.
-2. Server uses `thrift_client.py` to resolve service endpoints via Service Registry.
-3. Client connects to the resolved service (debugger, breakpoints, etc.).
-4. Responses are normalized to plain JSON-safe objects.
+1. An MCP tool call (or API call) reaches `Client.call`.
+2. `Backend.registry_endpoint()` ensures the managed processes are up and returns the registry.
+3. The service is resolved through the registry, and the RPC is made on a
+   fresh connection.
+4. Failures become `CSpyError`/`BackendError`, with backend diagnostics
+   attached when they look like crashes. MCP tools return plain JSON, with
+   `{"ok", "tool", "data", "error"}` envelopes for the AI-first tools.
 
 Important behavior:
-- Registry endpoint is not usually the debugger endpoint itself.
-- Session configuration is generally required before most debugger-dependent operations.
-- Reconfigure flow uses stop-before-configure best effort to avoid backend state conflicts.
-
-## Implemented Tool Surface (High-Level)
-Debugger:
-- Configure/start/stop/control/session lifecycle tools.
-
-Breakpoints:
-- List/get/set-from-descriptor/set-on-ULE/enable/remove/recently-hit.
-
-Context manager:
-- Stack and context helpers.
-
-Memory:
-- Memory read and hex write helpers.
-
-Disassembly:
-- Range disassembly tool.
-
-Source lookup:
-- Source range lookup.
-
-Symbols:
-- Visible symbols listing and lookup helpers.
-
-Fallback:
-- Generic debugger call tool for unwrapped methods.
+- The registry endpoint is not the debugger endpoint itself.
+- The event handler and libsupport services are hosted by this process and
+  registered on configure/start.
+- One session per CSpyServer2 process: managed mode restarts it on stop.
+- `go_and_wait`/`run_to` wait for the backend's target-stopped event.
+  `runToULE` returns early, and the core reads "stopped" before it starts.
 
 ## Breakpoint API Guidance (Important)
-### `breakpoints_set_on_ule`
-Primary API for creating breakpoints/watchpoints.
+`breakpoints_set_on_ule(ule, access_type)` / `client.breakpoints.add(ule, access)`
+is the primary way to create breakpoints and watchpoints.
+- `access_type`: `1` execute/fetch (code), `2` read, `3` write, `4` read/write
+  (`iar_cspy.AccessType`).
+- ULE forms: `main`, `func+4`, `0x100`, `{/abs/path/file.c}.123.1`
+  (reliable source form), `<ule>@<size>`. `main()` and `file.c:123` are
+  backend-dependent.
+- `breakpoints_set_from_descriptor` / `breakpoints.restore()` only take
+  descriptors returned by a listing. Descriptors are opaque, round-trip only.
 
-- Recommended code breakpoint call: `breakpoints_set_on_ule("main", 1)`
-- `access_type` common mapping:
-  - `1`: execute/fetch code breakpoint
-  - `2`: read watchpoint
-  - `3`: write watchpoint
-  - `4`: read/write watchpoint
-
-ULE format is backend-specific. Try in this order:
-1. `main`
-2. `file.c:123`
-3. `E:/absolute/path/file.c:123`
-
-Notes:
-- Some backends reject `main()` while accepting `main`.
-- Failures can also be due to backend/session instability, not just ULE syntax.
-
-### `breakpoints_set_from_descriptor`
-Do not pass handcrafted descriptor strings.
-
-- Intended workflow:
-  1. call `breakpoints_get_all()`
-  2. take `descriptor` from returned breakpoint entry
-  3. pass that descriptor back to `breakpoints_set_from_descriptor(...)`
-
-Descriptor formats are opaque and backend-version dependent.
-
-## Known Backend Issues Observed
-These are external/backend-side, frequently encountered during live testing:
-- Connection reset (`WinError 10054`) during/after configure/start.
-- Startup failures such as missing frontend service in some launch modes.
-- Flash loading failures during start.
-- Backend process exiting unexpectedly after some RPC sequences.
-
-Implications:
-- Tool failures may be transport/backend lifecycle failures rather than API misuse.
-- Fresh backend start and quick validation window are often required.
-
-## Recommended Validation Workflow
-1. Start CSpyServer2 in a known-good mode.
-2. Export required `THRIFT_*` env vars.
-3. Run a minimal sequence:
-   - `debugger_get_version_string`
-   - `debugger_configure_session`
-   - `debugger_start_smp_session` (if target supports)
-   - `breakpoints_get_all`
-   - `breakpoints_set_on_ule("main", 1)`
-4. If failure occurs, capture backend stderr/stdout and retry from fresh server process.
+## Known Backend Issues
+See `docs/backend-notes.md` in cspy-py. In short:
+- Connection resets (`WinError 10054`) and the backend exiting around
+  configure/start/stopSession; stopSession can assert in `-standalone -sockets` mode.
+- Headless: `ContextManager.getStack`/`getContextInfo` fail with "No such
+  service: frontend" (no IDE frontend).
+- Flash loading and license (`kDcLicenseViolation`) failures during start.
+Tool failures may be backend lifecycle failures rather than API misuse.
 
 ## Useful Local Commands
-Compile check:
-```powershell
-python -m compileall mcp_thrift_server
+```sh
+pip install -r requirements-dev.txt                    # the server editable + pytest
+pip install -e ../cspy-py                              # optional, afterwards: iar-cspy from a checkout
+pytest                                                 # unit tests (live tests skip)
+pytest -m live --cspy-iar-path=/opt/iar/ewarm          # live: managed, with IDE services
+pytest -m live --cspy-cspyserver2=/path/CSpyServer2    # live: CSpyServer2 only
+python -m compileall -q src tests examples mcp_thrift_server
 ```
-
-MCP stdio smoke test:
-```powershell
-python smoke_test_mcp_stdio.py
-```
-
-Live end-to-end demo (bundled simulator assets):
-```powershell
-python examples/run_live_demo.py
-```
+Use the `--opt=value` form for the `--cspy-*` paths: a separate path argument
+confuses pytest's rootdir detection.
 
 ## Current Priority and Next Work
-Highest priority:
-- Keep breakpoint behavior clear for AI callers with actionable errors and docs.
+- Keep the MCP tool surface stable and its errors actionable for AI callers.
+- Keep behavior in `iar_cspy` and the MCP tools thin, so scripts and tools
+  behave the same.
 - Preserve robust registry/eventhandler behavior across backend restarts.
-
-Good next steps:
-- Add a higher-level helper tool that attempts common ULE variants and reports normalized diagnostics.
-- Add lightweight retry/backoff around transient transport resets where safe.
-- Add a stable integration test harness that can skip tests when backend health is not good.
+- Open items are in `TODO.md` (launch.json schema, breakpoint categories on
+  emulators, zone discovery tool, stopSession crash reporting).
 
 ## Notes for Future Agents
 - Do not assume backend stability; validate with short, focused call sequences.
+- New backend behavior goes into `iar_cspy` (in cspy-py) with its tests
+  there; this repository gets the tool change and a test pinning what MCP
+  clients see.
 - Treat descriptor inputs as opaque round-trip values only.
-- Keep changes small and avoid broad refactors in `server.py` unless necessary.
-- Re-run `python -m compileall mcp_thrift_server` after edits.

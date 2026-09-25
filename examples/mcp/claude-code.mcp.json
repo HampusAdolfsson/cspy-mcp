@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cspy-debugger": {
+      "command": "iar-cspy-mcp",
+      "args": ["--iar-path", "/opt/iar/ewarm"]
+    }
+  }
+}

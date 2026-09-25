@@ -1,3 +1,6 @@
--r requirements.txt
+# Editable install of the server plus the test tools. To work on iar-cspy at
+# the same time, install your checkout of it afterwards (pip install -e
+# ../cspy-py): installing this file fetches iar-cspy from GitHub again.
+-e .
 pytest>=8.0
 pytest-timeout>=2.3

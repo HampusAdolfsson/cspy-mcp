@@ -7,7 +7,7 @@
 #   ./run_web.sh <iar-path>
 #
 # <iar-path> is an IAR installation or build stage, i.e. the directory with
-# under it. Every program used here is taken from <iar-path>/common/bin.
+# common/bin under it. Every program used here is taken from <iar-path>/common/bin.
 #
 # Env vars:
 #   IAR_INSTALL_PATH     the installation, if not given as an argument
@@ -17,6 +17,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run the server from the checkout without installing it. Its dependencies,
+# including iar-cspy (https://github.com/iarsystems/cspy-py), must be installed,
+# e.g. into .venv with `pip install -r requirements.txt`.
+export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 cd "$SCRIPT_DIR"
 
 PYTHON="$SCRIPT_DIR/.venv/bin/python3"
@@ -52,4 +56,4 @@ fi
 echo "IAR installation: $IAR_INSTALL_PATH" >&2
 echo "MCP endpoint: http://127.0.0.1:$WEB_PORT/mcp" >&2
 
-exec "$PYTHON" -m mcp_thrift_server "${ARGS[@]}" "$@"
+exec "$PYTHON" -m iar_cspy_mcp "${ARGS[@]}" "$@"
