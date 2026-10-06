@@ -39,6 +39,19 @@ def test_configure_start_and_breakpoint_roundtrip(server, cspy_launch):
     assert any(entry["id"] == bp["id"] for entry in server.breakpoints_get_all())
 
 
+def test_typed_breakpoints_and_the_log(server, cspy_launch):
+    if cspy_launch.get("driver") != "Simulator":
+        pytest.skip("The expected categories are the simulator's")
+    assert server.debugger_configure_and_start_session(json.dumps(cspy_launch))["ok"]
+    assert server.breakpoints_get_modes()[0] == "auto"
+    assert server.breakpoints_set_code("commit_history")["category"] == "STD_CODE2"
+    assert server.breakpoints_set_data("g_state", 3)["category"] == "STD_DATA2"
+    server.breakpoints_set_log("phase_step", "phase {g_phase}")
+
+    assert server.debugger_go_and_wait_for_core_state(desired_state=0, timeout_ms=10000)["ok"]
+    assert any(line.startswith("[phase_step]") for line in server.debugger_get_log())
+
+
 def test_discovery_and_read_only_calls(server, cspy_launch):
     out = server.debugger_configure_and_start_session(json.dumps(cspy_launch))
     assert out["ok"] and out["data"]["ranToSymbol"] is True

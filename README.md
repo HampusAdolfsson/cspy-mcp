@@ -153,7 +153,7 @@ runs the unit and live tests.
 | Session | `debugger_configure_and_start_session`, `debugger_configure_session`, `debugger_start_smp_session`, `debugger_stop_session`, `debugger_strict_cleanup`, `debugger_session_status`, `debugger_capabilities` |
 | Run control | `debugger_go`, `debugger_stop`, `debugger_reset`, `debugger_step_over`, `debugger_wait_for_core_state`, `debugger_go_and_wait_for_core_state` |
 | Target state | `debugger_eval_expression`, `debugger_register_snapshot`, `debugger_get_core_state`, `debugger_get_number_of_cores`, `debugger_get_cycle_counter`, `debugger_get_thread_list`, `debugger_get_modules`, `debugger_load_module`, `debugger_get_version`, `debugger_is_online` |
-| Breakpoints | `breakpoints_set_on_ule`, `breakpoints_set_on_ule_with_category`, `breakpoints_set_from_descriptor`, `breakpoints_get_all`, `breakpoints_get`, `breakpoints_enable`, `breakpoints_remove`, `breakpoints_recently_hit` |
+| Breakpoints | `breakpoints_set_on_source`, `breakpoints_set_code`, `breakpoints_set_data`, `breakpoints_set_log`, `breakpoints_get_modes`, `breakpoints_set_on_ule`, `breakpoints_set_on_ule_with_category`, `breakpoints_set_from_descriptor`, `breakpoints_get_all`, `breakpoints_get`, `breakpoints_enable`, `breakpoints_remove`, `breakpoints_recently_hit` |
 | Stack and symbols | `contextmanager_get_stack`, `contextmanager_get_stack_depth`, `contextmanager_get_context_info`, `contextmanager_get_locals`, `contextmanager_get_parameters`, `symbols_list_visible`, `symbols_lookup` |
 | Memory and code | `memory_read`, `memory_write_hex`, `disassembly_disassemble_range`, `sourcelookup_get_source_ranges` |
 | Terminal I/O | `libsupport_get_output`, `libsupport_clear_output`, `libsupport_push_input`, `libsupport_wait_for_input_request`, `libsupport_request_input`, `libsupport_request_input_binary` |
@@ -204,8 +204,14 @@ then `project_configure_and_start_debug()`. No launch.json is needed.
 Core states are 0 = stopped, 1 = running, 2 = sleeping, 3 = unknown, 4 = no power.
 On `error.code == "TIMEOUT"`, retry with a longer timeout or call `debugger_stop()`.
 
-**Breakpoints**: `breakpoints_set_on_ule("main", 1)`, where `1` is a code
-breakpoint and 2/3/4 are read/write/read-write watchpoints. ULEs are
+**Breakpoints**: `breakpoints_set_on_source("/abs/path/main.c", 82)`,
+`breakpoints_set_code("main", mode="hardware")`,
+`breakpoints_set_data("g_state", 3)` (2/3/4 = read/write/read-write) and
+`breakpoints_set_log("phase_step", "phase {g_phase}")` pick the breakpoint
+category for the session's driver, so they also work on hardware probes;
+`breakpoints_get_modes()` lists the driver's modes and `debugger_get_log()`
+returns log breakpoint output. `breakpoints_set_on_ule("main", 1)` leaves
+the category to the backend (1 = code, 2/3/4 watchpoints). ULEs are
 expressions (`main`, `func+4`), addresses (`0x100`), or full-form source
 locations (`{/abs/path/file.c}.123.1`); `main()` and `file.c:123` shorthand
 are backend-dependent. `breakpoints_set_from_descriptor` only takes

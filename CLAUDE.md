@@ -70,8 +70,12 @@ Important behavior:
   core reads "stopped" before it starts.
 
 ## Breakpoint API Guidance (Important)
-`breakpoints_set_on_ule(ule, access_type)` / `client.breakpoints.add(ule, access)`
-is the primary way to create breakpoints and watchpoints.
+`breakpoints_set_on_source`/`_set_code`/`_set_data`/`_set_log`
+(`client.breakpoints.add_source`/`add_code`/`add_data`/`add_log`) are the
+primary way to create breakpoints: the API picks the category for the
+session's driver. `breakpoints_set_on_ule(ule, access_type)` /
+`client.breakpoints.add(ule, access)` leaves it to the backend, which
+emulator drivers often reject.
 - `access_type`: `1` execute/fetch (code), `2` read, `3` write, `4` read/write
   (`iar_cspy.AccessType`).
 - ULE forms: `main`, `func+4`, `0x100`, `{/abs/path/file.c}.123.1`

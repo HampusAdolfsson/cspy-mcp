@@ -43,7 +43,10 @@ New items, roughly in priority order:
   accepted, using its first entry. Still open: a hardware example and a
   reference to the extension's formal schema.
 
-14. [ ] Breakpoint tools are effectively sim-only against emulator drivers
+14. [~] Breakpoint tools are effectively sim-only against emulator drivers
+- `breakpoints_set_on_source`/`_set_code`/`_set_data`/`_set_log` set
+  breakpoints from descriptors with the driver's category (iar-cspy's
+  `add_*`), as the VS Code extension does. Open: verify on emulator drivers.
 - Root cause is two known backend bugs in breakpoint category handling
   (default categories only cover STD_CODE*/STD_DATA*; explicit category ids
   outside the backend translation map are silently dropped, so even the

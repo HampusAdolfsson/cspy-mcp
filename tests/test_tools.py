@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,6 +43,8 @@ def test_tool_inventory(server):
         "listwindow_get_notifications", "listwindow_trace_status", "listwindow_trace_set_enabled",
         "listwindow_trace_clear", "debugger_stop_session", "breakpoints_get_all", "breakpoints_get",
         "breakpoints_set_from_descriptor", "breakpoints_set_on_ule", "breakpoints_set_on_ule_with_category",
+        "breakpoints_set_on_source", "breakpoints_set_code", "breakpoints_set_data", "breakpoints_set_log",
+        "breakpoints_get_modes", "debugger_get_log",
         "breakpoints_enable", "breakpoints_remove", "breakpoints_recently_hit", "contextmanager_get_stack",
         "contextmanager_get_stack_depth", "contextmanager_get_context_info", "contextmanager_get_locals",
         "contextmanager_get_parameters", "symbols_list_visible", "symbols_lookup", "memory_read",
@@ -366,6 +369,39 @@ def test_breakpoint_tools(server, fake):
     assert server.breakpoints_enable(11, True) is True
     assert server.breakpoints_remove(11) is True
     assert server.breakpoints_recently_hit() == [{"id": 11}]
+
+
+def test_typed_breakpoint_tools_pick_the_drivers_category(server, fake):
+    client, rpc = fake
+    client.debugger.launch_configuration = rpc.struct(
+        "debugger", "resolveLaunchConfiguration", driverNameOrEmpty="I-jet", targetOrEmpty="arm"
+    )
+    rpc.on("breakpoints", "setBreakpointFromDescriptor", lambda d: {"id": 21, "valid": True, "descriptor": d})
+    rpc.on("breakpoints", "getBreakpoint", lambda id: {"id": id, "valid": True, "category": "EMUL_CODE"})
+
+    assert server.breakpoints_get_modes()[:3] == ["auto", "hardware", "software"]
+    assert server.breakpoints_set_on_source("/abs/main.c", 82)["id"] == 21
+    server.breakpoints_set_code("main", "hardware")
+    server.breakpoints_set_data("g_state", 3, size=4)
+    server.breakpoints_set_log("phase_step", "phase {g_phase}")
+    sent = [args[0] for args in rpc.args("breakpoints", "setBreakpointFromDescriptor")]
+    assert [d.split(" ")[2:4] for d in sent] == [
+        ['"EMUL_CODE"', '"{/abs/main.c}.82.1"'],
+        ['"EMUL_CODE"', '"main"'],
+        ['"EMUL_DATA"', '"g_state@4"'],
+        ['"STD_LOG2"', '"phase_step"'],
+    ]
+    with pytest.raises(CSpyError, match="does not support trace_filter breakpoints"):
+        server.breakpoints_set_code("main", "trace_filter")
+
+
+def test_debugger_get_log_returns_the_latest_log_lines(server, fake):
+    client, _ = fake
+    client.events._post("log", SimpleNamespace(text="[phase_step] phase 1\n", cat=0))
+    client.events._post("debug", SimpleNamespace(note=0))
+    client.events._post("log", SimpleNamespace(text="flash slow", cat=2))
+    assert server.debugger_get_log() == ["[phase_step] phase 1", "Warning: flash slow"]
+    assert server.debugger_get_log(max_lines=1) == ["Warning: flash slow"]
 
 
 def test_inspection_tools(server, fake):

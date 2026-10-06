@@ -7,6 +7,7 @@ from typing import Any
 from iar_cspy import StopResult, to_plain
 from iar_cspy.debugger import PRE_SESSION_METHODS
 from iar_cspy.errors import DC_RESULTS, ERROR_CODES, FOCUSED_DC_RESULTS, error_entry
+from iar_cspy.events import LOG_CATEGORY_PREFIXES
 from iar_cspy.ide_services import IDE_SERVICES
 
 from .._app import envelope, get_client, mcp, require_session
@@ -214,6 +215,22 @@ def debugger_configure_and_start_session(launch_json: str) -> dict[str, Any]:
 def debugger_capabilities() -> dict[str, Any]:
     """Return a compact capability snapshot for the current backend/session."""
     return envelope(ok=True, tool="debugger_capabilities", data=get_client().capabilities())
+
+
+@mcp.tool()
+def debugger_get_log(max_lines: int = 100) -> list[str]:
+    """The latest lines of the debug log (the IDE's Debug Log), oldest first.
+
+    Includes the output of log breakpoints (breakpoints_set_log), backend
+    warnings and errors (prefixed "Warning: "/"Error: "). The server keeps
+    the most recent events only.
+    """
+    lines = [
+        LOG_CATEGORY_PREFIXES.get(getattr(event, "cat", None), "") + str(getattr(event, "text", "") or "").rstrip("\n")
+        for kind, event in get_client().events.recent()
+        if kind == "log"
+    ]
+    return lines[-int(max_lines):] if max_lines > 0 else []
 
 
 @mcp.tool()
