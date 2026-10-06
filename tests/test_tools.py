@@ -171,7 +171,7 @@ def test_stop_session_when_already_stopped(server, fake):
 
 def test_stop_session_in_managed_mode_exits_the_backend(server, monkeypatch):
     client, rpc = fake_client(Config(mode="managed"), started=True)
-    monkeypatch.setattr(client.backend, "restart_debugger", lambda: None)
+    monkeypatch.setattr(client.backend, "stop_debugger", lambda: None)
     server.set_client(client)
     try:
         out = server.debugger_stop_session()
